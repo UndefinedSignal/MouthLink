@@ -4,7 +4,7 @@
 ONNX — чтобы крутить модель из C# (ONNX Runtime) в модуле VRCFT, без Python в
 рантайме. Ось батча динамическая; H/W фиксируются под твою камеру при экспорте.
 """
-import argparse, json
+import argparse, json, os
 import numpy as np
 import torch
 from model import model_from_checkpoint
@@ -32,6 +32,13 @@ def main():
         dynamo=False,
     )
     print(f"экспортировано → {a.out}  (arch={ck.get('arch', 'tiny')}, вход 1x1x{h}x{w}, выход {K}: {ck['channels']})")
+    # Рядом — описание входа/выхода для tools/mouthlink_live.py (каналы, размер кадра).
+    side = os.path.splitext(a.out)[0] + ".json"
+    with open(side, "w", encoding="utf-8") as f:
+        json.dump({"channels": ck["channels"], "height": h, "width": w, "arch": ck.get("arch", "tiny"),
+                   "input": "frame [N,1,H,W] float32 = gray/255", "output": "blendshapes [N,K] sigmoid"},
+                  f, indent=2, ensure_ascii=False)
+    print(f"описание модели → {side}")
 
     # Сверка с onnxruntime на случайных входах.
     try:

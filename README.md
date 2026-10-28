@@ -105,6 +105,26 @@ unknown (NaN, ignored by the loss) elsewhere. For direction channels `train.py` 
 "recognised X % / false Y %" — plain MAE is meaningless for such rare channels.
 See `training/README.md` (Russian) for details.
 
+## Live in VRChat (tongue direction)
+
+1. Train the final model on all sessions and export it (writes `mouth.onnx` + `mouth.json`):
+   ```
+   cd training
+   python train.py --data d:\mouthrecon\data\real --out runs\final --arch mnv3 --pretrained --val-frac 0
+   python export_onnx.py --ckpt runs\final\best.pt --out runs\final\mouth.onnx
+   ```
+2. Install the *UnifiedPicoModule-MouthLink* build of UnifiedPicoModule (it listens on
+   `127.0.0.1:9050` and sets `TongueLeft/Right/Up/Down` only while stock `TongueOut` is up).
+3. Bridge, VRCFaceTracking and VRChat as usual; **MouthLink.Receiver must not run** (the
+   headset serves one subscriber). Then:
+   ```
+   pip install onnxruntime pillow numpy
+   python tools/mouthlink_live.py --host <headset-IP> --onnx training\runs\final\mouth.onnx
+   ```
+   It infers every frame (90 fps), smooths (`--tau`), maps the model output with `--lo/--hi`
+   and prints the four directions once a second. Your avatar needs tongue direction
+   parameters (e.g. VRCFT `TongueX`/`TongueY`).
+
 ## Without a headset
 
 ```

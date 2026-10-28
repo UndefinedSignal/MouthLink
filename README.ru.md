@@ -103,6 +103,26 @@ python train.py --data d:\mouthrecon\data\real --out runs\real --arch mnv3 --pre
 направлений `train.py` печатает «узнаёт X %, ложных Y %» — обычный MAE для таких редких
 каналов ничего не говорит. Подробности — `training/README.md`.
 
+## Вживую в VRChat (направление языка)
+
+1. Финальная модель на всех сессиях и экспорт (пишет `mouth.onnx` + `mouth.json`):
+   ```
+   cd training
+   python train.py --data d:\mouthrecon\data\real --out runs\final --arch mnv3 --pretrained --val-frac 0
+   python export_onnx.py --ckpt runs\final\best.pt --out runs\final\mouth.onnx
+   ```
+2. Поставить сборку *UnifiedPicoModule-MouthLink* (слушает `127.0.0.1:9050` и выставляет
+   `TongueLeft/Right/Up/Down`, только пока стоковый `TongueOut` поднят).
+3. Бридж, VRCFaceTracking и VRChat как обычно; **MouthLink.Receiver не запускать** (шлем
+   отдаёт поток одному подписчику). Затем:
+   ```
+   pip install onnxruntime pillow numpy
+   python tools/mouthlink_live.py --host <IP-шлема> --onnx training\runs\final\mouth.onnx
+   ```
+   Скрипт прогоняет модель на каждом кадре (90 кадров/с), сглаживает (`--tau`), переводит
+   выход модели через `--lo/--hi` и раз в секунду печатает четыре направления. У аватара
+   должны быть параметры направления языка (например, VRCFT `TongueX`/`TongueY`).
+
 ## Без шлема
 
 ```
