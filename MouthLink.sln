@@ -1,0 +1,40 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MouthLink.Core", "MouthLink.Core\MouthLink.Core.csproj", "{9B9E0A93-A248-47E4-B1CA-D354FD0B6B2C}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MouthLink.Emulator", "MouthLink.Emulator\MouthLink.Emulator.csproj", "{BBBADDCE-F655-48EE-B842-7866C2D8E9CD}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MouthLink.Receiver", "MouthLink.Receiver\MouthLink.Receiver.csproj", "{84143897-9285-4C5C-A33A-9FDD7D1F97EB}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MouthLink.Player", "MouthLink.Player\MouthLink.Player.csproj", "{FBC8400F-34C5-4538-9373-6A95A2A13A8D}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{9B9E0A93-A248-47E4-B1CA-D354FD0B6B2C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9B9E0A93-A248-47E4-B1CA-D354FD0B6B2C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9B9E0A93-A248-47E4-B1CA-D354FD0B6B2C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9B9E0A93-A248-47E4-B1CA-D354FD0B6B2C}.Release|Any CPU.Build.0 = Release|Any CPU
+		{BBBADDCE-F655-48EE-B842-7866C2D8E9CD}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{BBBADDCE-F655-48EE-B842-7866C2D8E9CD}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{BBBADDCE-F655-48EE-B842-7866C2D8E9CD}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{BBBADDCE-F655-48EE-B842-7866C2D8E9CD}.Release|Any CPU.Build.0 = Release|Any CPU
+		{84143897-9285-4C5C-A33A-9FDD7D1F97EB}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{84143897-9285-4C5C-A33A-9FDD7D1F97EB}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{84143897-9285-4C5C-A33A-9FDD7D1F97EB}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{84143897-9285-4C5C-A33A-9FDD7D1F97EB}.Release|Any CPU.Build.0 = Release|Any CPU
+		{FBC8400F-34C5-4538-9373-6A95A2A13A8D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{FBC8400F-34C5-4538-9373-6A95A2A13A8D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{FBC8400F-34C5-4538-9373-6A95A2A13A8D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{FBC8400F-34C5-4538-9373-6A95A2A13A8D}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal
