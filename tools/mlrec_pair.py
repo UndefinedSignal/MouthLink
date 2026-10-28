@@ -27,6 +27,16 @@ r"""Спаривание кадров MouthLink со стоковыми знач
                            Записи без подсказок дают только такие нули — тоже полезно.
   --settle 0.8 --tail 0.2  сколько секунд отрезать в начале (реакция) и в конце подсказки
   --neg-tongue 0.05        порог стокового TongueOut для «направления нет»
+  --face                   сценарий выражений (приёмник --prompts face): каналы 33 стока +
+                           TongueLeft/Right/Up/Down + новые каналы каталога (щёки раздельно,
+                           втянутые щёки, напряжённые губы, язык трубочкой). Внутри выражения
+                           (после его settle, без tail) каналы из каталога берутся из сценария,
+                           остальные стоковые — от стока; вне выражений: сток + автоправила
+                           (язык не высунут → направления и TongueRoll = 0; щёки не надуты →
+                           CheekPuffLeft/Right = 0), прочие новые каналы неизвестны (NaN).
+                           Включает и разметку языка из записей --prompts tongue.
+  --catalog FILE           каталог выражений (по умолчанию ../prompts/face.json от скрипта)
+  --neg-cheek 0.05         порог стокового CheekPuff для «щёки не надуты»
   --flip                   записать правила отражения L↔R в meta.json (включает
                            отражение в аугментациях). Только если камера рта стоит по
                            центру лица: иначе отражённый кадр — ракурс, которого нет.
@@ -63,6 +73,25 @@ PROMPT_DIRS = {
     "tongue_up": (0, 0, 1, 0),
     "tongue_down": (0, 0, 0, 1),
 }
+
+
+def load_catalog(path, channels):
+    """id → (список (индекс канала, значение), settle_ns, tail_ns, zero_new)."""
+    c = json.load(open(path, encoding="utf-8"))
+    d = c.get("defaults", {})
+    ci = {ch: i for i, ch in enumerate(channels)}
+    specs = {}
+    rest = c.get("rest", {})
+    specs[rest.get("id", "neutral")] = ([], int(d.get("settle", 0.8) * 1e9), int(d.get("tail", 0.2) * 1e9), True)
+    for it in c["items"]:
+        bad = [k for k in it.get("labels", {}) if k not in ci]
+        if bad:
+            raise SystemExit(f"{path}: в выражении {it['id']} неизвестные каналы {bad}")
+        specs[it["id"]] = ([(ci[k], float(v)) for k, v in it.get("labels", {}).items()],
+                           int(it.get("settle", d.get("settle", 0.8)) * 1e9),
+                           int(it.get("tail", d.get("tail", 0.2)) * 1e9),
+                           bool(it.get("zero_new", d.get("zero_new", True))))
+    return c, specs
 
 
 def read_prompts(path):
@@ -148,6 +177,9 @@ def main():
     ap.add_argument("--settle", type=float, default=0.8)
     ap.add_argument("--tail", type=float, default=0.2)
     ap.add_argument("--neg-tongue", type=float, default=0.05)
+    ap.add_argument("--face", action="store_true")
+    ap.add_argument("--catalog")
+    ap.add_argument("--neg-cheek", type=float, default=0.05)
     a = ap.parse_args()
 
     crop = tuple(int(v) for v in a.crop.split(",")) if a.crop else None
@@ -182,6 +214,25 @@ def main():
     out_hw = None
     channels = MOUTH_NAMES + (TONGUE_DIRS if a.tongue else [])
     i_tongue_out = MOUTH_NAMES.index("TongueOut")
+    face_specs = None
+    if a.face:
+        a.tongue = False   # своя ветка: язык размечается по каталогу (метки tongue_* совпадают)
+        cat_path = a.catalog or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "prompts", "face.json")
+        if not os.path.exists(cat_path):
+            raise SystemExit(f"нет каталога {cat_path}; укажи --catalog")
+        cat = json.load(open(cat_path, encoding="utf-8"))
+        new_ch = cat["new_channels"]
+        channels = MOUTH_NAMES + TONGUE_DIRS + new_ch
+        cat, face_specs = load_catalog(cat_path, channels)
+        ci = {ch: i for i, ch in enumerate(channels)}
+        i_dirs = [ci[d] for d in TONGUE_DIRS]
+        i_roll = ci.get("TongueRoll")
+        i_puff_lr = [ci[x] for x in ("CheekPuffLeft", "CheekPuffRight") if x in ci]
+        i_cheek = MOUTH_NAMES.index("CheekPuff")
+        zero_idx = [ci[x] for x in TONGUE_DIRS + new_ch]
+        item_stats = {}      # id → {канал: [сумма стока, кадров, цель]}
+        unknown_labels = set()
+        print(f"каталог: {os.path.abspath(cat_path)} ({len(cat['items'])} выражений, новых каналов {len(new_ch)})")
     settle_ns, tail_ns = int(a.settle * 1e9), int(a.tail * 1e9)
     for gi, sess in enumerate(a.sessions):
         stock_path = os.path.splitext(sess)[0] + ".stock.csv"
@@ -190,8 +241,10 @@ def main():
         stock = read_stock(stock_path, a.labels)
         st = dict(file=sess, stock_rows=len(stock), frames=0, matched=0, no_stock=0,
                   invalid=0, warmup=0, taken=0)
-        prompts = read_prompts(os.path.splitext(sess)[0] + ".prompts.csv") if a.tongue else []
+        prompts = read_prompts(os.path.splitext(sess)[0] + ".prompts.csv") if (a.tongue or a.face) else []
         starts = [p[0] for p in prompts]
+        if a.face:
+            st["prompts"] = len(prompts)
         if a.tongue:
             st["prompts"] = len(prompts)
             st["tongue"] = {"positive": {d: 0 for d in TONGUE_DIRS}, "zero": 0, "unknown": 0,
@@ -228,6 +281,33 @@ def main():
                 if dirs is None:
                     dirs = (np.zeros(4, np.float32) if vec[i_tongue_out] < a.neg_tongue
                             else np.full(4, np.nan, np.float32))
+            face_vec = None
+            if a.face:
+                face_vec = np.full(len(channels), np.nan, np.float32)
+                face_vec[:len(MOUTH_NAMES)] = np.clip(vec, 0.0, 1.0)
+                if vec[i_tongue_out] < a.neg_tongue:
+                    face_vec[i_dirs] = 0
+                    if i_roll is not None:
+                        face_vec[i_roll] = 0
+                if vec[i_cheek] < a.neg_cheek:
+                    face_vec[i_puff_lr] = 0
+                j = bisect.bisect_right(starts, cap) - 1
+                if j >= 0 and cap < prompts[j][1]:
+                    s0, e0, lab = prompts[j]
+                    spec = face_specs.get(lab)
+                    if spec is None:
+                        unknown_labels.add(lab)
+                    else:
+                        pairs, settle, tail, zero_new = spec
+                        if s0 + settle <= cap <= e0 - tail:
+                            if zero_new:
+                                face_vec[zero_idx] = 0
+                            for idx, val in pairs:
+                                if idx < len(MOUTH_NAMES):
+                                    rec = item_stats.setdefault(lab, {}).setdefault(channels[idx], [0.0, 0, val])
+                                    rec[0] += float(np.clip(vec[idx], 0, 1)); rec[1] += 1
+                                face_vec[idx] = val
+                            in_prompt = True
             k += 1
             # Кадры внутри подсказок редкие и ценные: прореживание --every их не трогает.
             if (k - 1) % a.every and not in_prompt:
@@ -248,7 +328,7 @@ def main():
             elif img.shape != out_hw:
                 raise SystemExit(f"{sess}: размер кадра {img.shape} ≠ {out_hw}; задай одинаковые --crop/--size")
             frames.append(np.ascontiguousarray(img))
-            lab_vec = np.clip(vec, 0.0, 1.0)
+            lab_vec = face_vec if a.face else np.clip(vec, 0.0, 1.0)
             if a.tongue:
                 lab_vec = np.concatenate([lab_vec, dirs])
                 if np.isnan(dirs).any():
@@ -286,10 +366,32 @@ def main():
     np.save(os.path.join(a.out, "frames.npy"), F)
     np.save(os.path.join(a.out, "labels.npy"), Y)
     np.save(os.path.join(a.out, "groups.npy"), G)
+    if a.face:
+        if unknown_labels:
+            print(f"  ! метки подсказок не из каталога (пропущены): {', '.join(sorted(unknown_labels))}")
+        rare = TONGUE_DIRS + cat["new_channels"]
+        print("  редкие каналы, кадров с меткой ≥ 0.5: " + ", ".join(
+            f"{c}={int((Y[:, channels.index(c)] >= 0.5).sum())}" for c in rare))
+        # Где сток расходится с подсказкой сильнее всего (на твоём лице).
+        gaps = []
+        for item, chans in item_stats.items():
+            for ch, (ssum, n, target) in chans.items():
+                if n:
+                    gaps.append((abs(ssum / n - target), item, ch, target, ssum / n, n))
+        gaps.sort(reverse=True)
+        report["stock_vs_prompt"] = [dict(item=i, channel=c, target=t, stock_mean=round(m, 3), frames=n)
+                                     for _, i, c, t, m, n in gaps]
+        worst = [g for g in gaps if g[0] >= 0.25][:15]
+        if worst:
+            print("  сток против подсказки (наибольшие расхождения):")
+            for gap, item, ch, target, mean, n in worst:
+                print(f"    {item:<18} {ch:<16} цель {target:.1f}  сток {mean:.2f}  ({n} кадров)")
     meta = {"height": int(F.shape[1]), "width": int(F.shape[2]), "channels": channels,
             "source": {"kind": "stock-distillation", "labels": a.labels, "crop": a.crop,
                        "size": a.size, "every": a.every, "sessions": a.sessions,
-                       "tongue": a.tongue and {"settle": a.settle, "tail": a.tail, "neg_tongue": a.neg_tongue}}}
+                       "tongue": a.tongue and {"settle": a.settle, "tail": a.tail, "neg_tongue": a.neg_tongue},
+                       "face": a.face and {"catalog": os.path.abspath(cat_path), "neg_tongue": a.neg_tongue,
+                                           "neg_cheek": a.neg_cheek}}}
     if a.flip:
         meta["flip"] = {"swap": flip_pairs(channels), "mirror": []}
     with open(os.path.join(a.out, "meta.json"), "w", encoding="utf-8") as f:

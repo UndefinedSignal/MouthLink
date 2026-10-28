@@ -6,6 +6,7 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <EmbeddedResource Include="..\prompts\face.json" LogicalName="MouthLink.prompts.face.json" />
     <ProjectReference Include="..\MouthLink.Core\MouthLink.Core.csproj" />
   </ItemGroup>
 </Project>

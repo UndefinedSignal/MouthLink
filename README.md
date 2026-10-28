@@ -92,12 +92,36 @@ The receiver says "tongue left / right / up / down / straight" (Russian voice if
 installed in Windows, otherwise English; `--voice en|off`), 3 shuffled rounds of 4 s,
 ≈2 min, and stops by itself. Left/right are **your own** sides.
 
+**Full-face calibration (all expressions):**
+```
+dotnet run --project MouthLink.Receiver -- --host <headset-IP> --fps 0 --record d:\mouthrecon\f01.mlrec --prompts face
+```
+57 prompts from `prompts/face.json` in 8 groups — jaw, lips, mouth corners, nose,
+cheeks, tongue, emotions, speech — shuffled, each followed by a short "relax" pause.
+Simple poses are held 4 s; one-sided ones (left/right cheek, corner, tightener) 6 s with
+a longer settle, because they take a moment to find; emotions 5 s, speech 9–12 s.
+One round ≈ 7.5 min. Options: `--skip tongue_roll,...` (expressions you cannot do),
+`--groups jaw,lips,...`, `--rounds N`, `--time-scale 1.5` (everything slower),
+`--catalog my.json` (own catalog). The catalog adds channels the stock model lacks:
+`CheekPuffLeft/Right`, `CheekSuckLeft/Right`, `MouthTightenerLeft/Right`, `TongueRoll`.
+
 **Build a dataset and train:**
 ```
 python tools/mlrec_pair.py d:\mouthrecon\data\real "d:\mouthrecon\[st]*.mlrec" --tongue --size 160 --every 2
 cd training
 python train.py --data d:\mouthrecon\data\real --out runs\real --arch mnv3 --pretrained --cv
 ```
+For face sessions use `--face` instead of `--tongue` (all sessions can be mixed —
+tongue prompts are understood too):
+```
+python tools/mlrec_pair.py d:\mouthrecon\data\face "d:\mouthrecon\[stf]*.mlrec" --face --size 160 --every 2
+```
+With `--face`, inside a prompt (after its settle time) the catalog targets override
+stock — e.g. "smile left" sets `MouthSmileL` to 1 and `MouthSmileR` to 0; new channels
+not named by the prompt become 0; emotions and speech keep stock labels. The report
+lists prompts where stock disagrees with the target — that is exactly what the own
+model learns beyond stock.
+
 `mlrec_pair.py` pairs frames and stock values by exact timestamp, uses the unsmoothed
 stock values as labels (no filter lag), and with `--tongue` adds `TongueLeft/Right/Up/Down`:
 taken from the prompts inside prompted intervals, 0 where stock says the tongue is in,
@@ -146,5 +170,7 @@ stream has no authentication — use it on a trusted LAN only.
 ## Roadmap
 
 - Tongue direction from prompted sessions (in progress), then circular motion.
+- Full-face calibration (`--prompts face`): training done offline; live output of the
+  new channels into VRCFaceTracking is next.
 - VRCFaceTracking module: ONNX inference on the PC, merged with stock (stock as a floor/gate).
 - Optional compression (lz4) and an address allowlist on the headset side.

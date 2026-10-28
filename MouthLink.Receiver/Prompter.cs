@@ -2,7 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 
 namespace MouthLink.Receiver;
@@ -52,6 +54,60 @@ public sealed class Prompter
         return steps;
     }
 
+    // ---- Программа "face": каталог выражений prompts/face.json ----
+    public sealed class FaceCatalog
+    {
+        public Phrase Intro { get; set; } = new();
+        public Phrase Rest { get; set; } = new();
+        public Defaults Defaults { get; set; } = new();
+        public List<Item> Items { get; set; } = new();
+    }
+    public sealed class Phrase { public string Id { get; set; } = "neutral"; public string Ru { get; set; } = ""; public string En { get; set; } = ""; public double Seconds { get; set; } }
+    public sealed class Defaults { public double Hold { get; set; } = 4; }
+    public sealed class Item
+    {
+        public string Id { get; set; } = "";
+        public string Group { get; set; } = "";
+        public string Ru { get; set; } = "";
+        public string En { get; set; } = "";
+        public double? Hold { get; set; }
+        public bool Optional { get; set; }
+    }
+
+    /// <summary>Каталог: --catalog, иначе prompts/face.json в текущей папке, иначе встроенный.</summary>
+    public static (FaceCatalog Catalog, string Source) LoadFaceCatalog(string? path)
+    {
+        var opts = new JsonSerializerOptions { PropertyNameCaseInsensitive = true, ReadCommentHandling = JsonCommentHandling.Skip };
+        string? file = path ?? (File.Exists(Path.Combine("prompts", "face.json")) ? Path.Combine("prompts", "face.json") : null);
+        if (file != null)
+            return (JsonSerializer.Deserialize<FaceCatalog>(File.ReadAllText(file), opts)!, Path.GetFullPath(file));
+        using var stream = typeof(Prompter).Assembly.GetManifestResourceStream("MouthLink.prompts.face.json")
+            ?? throw new InvalidOperationException("встроенный каталог prompts/face.json не найден");
+        return (JsonSerializer.Deserialize<FaceCatalog>(stream, opts)!, "встроенный prompts/face.json");
+    }
+
+    public static List<Step> Face(FaceCatalog c, int rounds, int seed, ISet<string> skip, ISet<string>? groups, double timeScale)
+    {
+        var rng = new Random(seed);
+        var items = c.Items.Where(i => !skip.Contains(i.Id) && (groups == null || groups.Contains(i.Group))).ToList();
+        var steps = new List<Step>
+        {
+            new("", c.Intro.Ru, c.Intro.En, c.Intro.Seconds * timeScale),
+            new(c.Rest.Id, c.Rest.Ru, c.Rest.En, c.Rest.Seconds * timeScale),
+        };
+        for (int r = 0; r < rounds; r++)
+        {
+            var order = items.OrderBy(_ => rng.Next()).ToList();
+            foreach (var i in order)
+            {
+                steps.Add(new(i.Id, i.Ru, i.En, (i.Hold ?? c.Defaults.Hold) * timeScale));
+                steps.Add(new(c.Rest.Id, c.Rest.Ru, c.Rest.En, c.Rest.Seconds * timeScale));
+            }
+        }
+        steps.Add(new("", "Готово, спасибо", "Done, thank you", 2 * timeScale));
+        return steps;
+    }
+
     readonly List<Step> _steps;
     readonly Func<long> _sourceNow;      // часы шлема, нс; -1 если неизвестно
     readonly Func<bool> _framesFlowing;  // кадры идут прямо сейчас
@@ -74,10 +130,10 @@ public sealed class Prompter
         t.Start();
     }
 
-    static void Banner(string text)
+    static void Banner(string text, string suffix = "")
     {
         Console.WriteLine();
-        Console.WriteLine($"  ==========  {text.ToUpperInvariant()}  ==========");
+        Console.WriteLine($"  ==========  {text.ToUpperInvariant()}  =========={suffix}");
         Console.WriteLine();
     }
 
@@ -100,7 +156,7 @@ public sealed class Prompter
         {
             if (_stop.IsCancellationRequested) break;
             long start = _sourceNow();
-            Banner(step.Ru);
+            Banner(step.Ru, step.Label.Length > 0 && step.Label != "neutral" ? $"   [{step.Label}, {step.Seconds:0.#} с]" : "");
             _voice.Say(step.Ru, step.En);
             var until = DateTime.UtcNow.AddSeconds(step.Seconds);
             while (DateTime.UtcNow < until && !_stop.IsCancellationRequested) Thread.Sleep(20);

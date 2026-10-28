@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading;
@@ -23,7 +25,12 @@ using MouthLink.Receiver;
 //   Калибровка с подсказками (нужен --record):
 //   --prompts tongue  голосом/в консоли говорит, что делать языком, пишет <имя>.prompts.csv;
 //                     по окончании подсказок запись останавливается сама.
-//   --rounds 3 --hold 4 --rest 2.5   кругов, секунд на движение, секунд «убрать»
+//   --prompts face    полный сценарий выражений из каталога prompts/face.json (≈7.5 мин на круг,
+//                     время удержания у каждого выражения своё); --rounds по умолчанию 1
+//   --skip id,id      пропустить выражения (например tongue_roll, если язык не сворачивается)
+//   --groups g,g      только группы: jaw, lips, corners, nose, cheeks, tongue, emotion, speech
+//   --catalog FILE    другой каталог выражений
+//   --rounds 3 --hold 4 --rest 2.5   (tongue) кругов, секунд на движение, секунд «убрать»
 //   --voice ru|en|off                 голос подсказок (ru — если в Windows есть русский голос)
 //   --seed N                          порядок движений в кругах (по умолчанию случайный)
 //
@@ -37,6 +44,8 @@ ushort roiX = 0, roiY = 0, roiW = 0, roiH = 0;   // --roi x,y,w,h; w/h = 0 → �
 bool wantStock = true;                              // --no-stock выключает
 string? promptsProgram = null; int rounds = 3; double hold = 4, rest = 2.5; string voiceMode = "ru";
 int seed = Environment.TickCount;
+bool roundsSet = false; string? catalogPath = null; double timeScale = 1;
+var skipIds = new HashSet<string>(); HashSet<string>? onlyGroups = null;
 
 for (int i = 0; i < args.Length; i++)
 {
@@ -51,7 +60,11 @@ for (int i = 0; i < args.Length; i++)
         case "--verify": verify = true; break;
         case "--no-stock": wantStock = false; break;
         case "--prompts": promptsProgram = args[++i]; break;
-        case "--rounds": rounds = int.Parse(args[++i]); break;
+        case "--rounds": rounds = int.Parse(args[++i]); roundsSet = true; break;
+        case "--skip": foreach (var x in args[++i].Split(',', StringSplitOptions.RemoveEmptyEntries)) skipIds.Add(x.Trim()); break;
+        case "--groups": onlyGroups = new HashSet<string>(args[++i].Split(',', StringSplitOptions.RemoveEmptyEntries).Select(x => x.Trim())); break;
+        case "--catalog": catalogPath = args[++i]; break;
+        case "--time-scale": timeScale = double.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture); break; // для тестов
         case "--hold": hold = double.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture); break;
         case "--rest": rest = double.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture); break;
         case "--voice": voiceMode = args[++i]; break;
@@ -72,10 +85,10 @@ for (int i = 0; i < args.Length; i++)
     }
 }
 if (verify) Console.WriteLine("сверка с тестовым шаблоном включена (источник должен слать --pattern)");
-if (promptsProgram != null && (promptsProgram != "tongue" || recordPath == null))
+if (promptsProgram != null && (promptsProgram is not ("tongue" or "face") || recordPath == null))
 {
-    Console.WriteLine(promptsProgram != "tongue" ? $"неизвестная программа подсказок «{promptsProgram}» (есть: tongue)"
-                                                 : "--prompts требует --record");
+    Console.WriteLine(promptsProgram is not ("tongue" or "face") ? $"неизвестная программа подсказок «{promptsProgram}» (есть: tongue, face)"
+                                                                 : "--prompts требует --record");
     return 2;
 }
 if (roiW > 0) Console.WriteLine($"ROI: x={roiX} y={roiY} {roiW}x{roiH} (если не влезает в кадр — источник шлёт полный кадр)");
@@ -188,9 +201,20 @@ long SourceNow()
 Prompter? prompter = null;
 if (promptsProgram != null)
 {
-    var steps = Prompter.Tongue(rounds, hold, rest, seed);
+    List<Prompter.Step> steps;
+    if (promptsProgram == "face")
+    {
+        var (catalog, catalogSource) = Prompter.LoadFaceCatalog(catalogPath);
+        var unknown = skipIds.Where(id => catalog.Items.All(it => it.Id != id)).ToList();
+        if (unknown.Count > 0) Console.WriteLine($"  ! в каталоге нет выражений: {string.Join(", ", unknown)}");
+        steps = Prompter.Face(catalog, roundsSet ? rounds : 1, seed, skipIds, onlyGroups, timeScale);
+        int n = steps.Count(st => st.Label.Length > 0 && st.Label != catalog.Rest.Id);
+        Console.WriteLine($"каталог: {catalogSource}; выражений в сценарии: {n}");
+        if (n == 0) { Console.WriteLine("после --skip/--groups не осталось ни одного выражения"); return 2; }
+    }
+    else steps = Prompter.Tongue(rounds, hold * timeScale, rest * timeScale, seed);
     double total = 0; foreach (var st in steps) total += st.Seconds;
-    Console.WriteLine($"калибровка «{promptsProgram}»: {rounds} кругов, ≈{total:F0} с");
+    Console.WriteLine($"калибровка «{promptsProgram}»: ≈{total / 60:F1} мин");
     prompter = new Prompter(steps, SourceNow,
         () => { long arr = Interlocked.Read(ref lastArrNs); return arr > 0 && (long)NowNs() - arr < 300_000_000L; },
         Path.ChangeExtension(recordPath!, ".prompts.csv"), voiceMode, stop.Token);

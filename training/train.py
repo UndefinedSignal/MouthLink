@@ -128,7 +128,11 @@ def evaluate(net, X, Y, G, idx, batch, n_groups):
     return overall, per_ch, per_g
 
 
-DIRECTION_CHANNELS = ("TongueLeft", "TongueRight", "TongueUp", "TongueDown")
+# Редкие каналы (размечены только подсказками, почти все метки — 0): направления языка и
+# каналы сценария лица, которых нет у стока (prompts/face.json → new_channels).
+DIRECTION_CHANNELS = ("TongueLeft", "TongueRight", "TongueUp", "TongueDown",
+                      "CheekPuffLeft", "CheekPuffRight", "CheekSuckLeft", "CheekSuckRight",
+                      "MouthTightenerLeft", "MouthTightenerRight", "TongueRoll")
 
 
 @torch.no_grad()
@@ -165,7 +169,7 @@ def format_directions(d):
             parts.append(f"{c}: нет примеров")
         else:
             parts.append(f"{c}: узнаёт {100 * v['recall']:.0f}% из {v['positives']}, ложных {100 * (v['false_rate'] or 0):.1f}%")
-    return "  направления языка — " + "; ".join(parts)
+    return "  редкие каналы — " + "; ".join(parts)
 
 
 def train_once(a, X, Y, G, tr_idx, va_idx, K, perm, mirror, n_groups, dev, log=print):
