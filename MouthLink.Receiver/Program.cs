@@ -47,31 +47,39 @@ int seed = Environment.TickCount;
 bool roundsSet = false; string? catalogPath = null; double timeScale = 1;
 var skipIds = new HashSet<string>(); HashSet<string>? onlyGroups = null;
 
+// Значение опции: следующий аргумент, если он есть и сам не опция.
+string Val(int i) =>
+    i + 1 < args.Length && !args[i + 1].StartsWith("--")
+        ? args[i + 1]
+        : throw new ArgumentException($"у {args[i]} нет значения");
+
+try
+{
 for (int i = 0; i < args.Length; i++)
 {
     switch (args[i])
     {
-        case "--host": host = args[++i]; break;
-        case "--ctrl": ctrlPort = int.Parse(args[++i]); break;
-        case "--listen": listenPort = int.Parse(args[++i]); break;
-        case "--fps": fps = int.Parse(args[++i]); break;
-        case "--record": recordPath = args[++i]; break;
-        case "--view": viewPort = int.Parse(args[++i]); break; // 0 = выключить просмотр
+        case "--host": host = Val(i++); break;
+        case "--ctrl": ctrlPort = int.Parse(Val(i++)); break;
+        case "--listen": listenPort = int.Parse(Val(i++)); break;
+        case "--fps": fps = int.Parse(Val(i++)); break;
+        case "--record": recordPath = Val(i++); break;
+        case "--view": viewPort = int.Parse(Val(i++)); break; // 0 = выключить просмотр
         case "--verify": verify = true; break;
         case "--no-stock": wantStock = false; break;
-        case "--prompts": promptsProgram = args[++i]; break;
-        case "--rounds": rounds = int.Parse(args[++i]); roundsSet = true; break;
-        case "--skip": foreach (var x in args[++i].Split(',', StringSplitOptions.RemoveEmptyEntries)) skipIds.Add(x.Trim()); break;
-        case "--groups": onlyGroups = new HashSet<string>(args[++i].Split(',', StringSplitOptions.RemoveEmptyEntries).Select(x => x.Trim())); break;
-        case "--catalog": catalogPath = args[++i]; break;
-        case "--time-scale": timeScale = double.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture); break; // для тестов
-        case "--hold": hold = double.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture); break;
-        case "--rest": rest = double.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture); break;
-        case "--voice": voiceMode = args[++i]; break;
-        case "--seed": seed = int.Parse(args[++i]); break;
+        case "--prompts": promptsProgram = Val(i++); break;
+        case "--rounds": rounds = int.Parse(Val(i++)); roundsSet = true; break;
+        case "--skip": foreach (var x in Val(i++).Split(',', StringSplitOptions.RemoveEmptyEntries)) skipIds.Add(x.Trim()); break;
+        case "--groups": onlyGroups = new HashSet<string>(Val(i++).Split(',', StringSplitOptions.RemoveEmptyEntries).Select(x => x.Trim())); break;
+        case "--catalog": catalogPath = Val(i++); break;
+        case "--time-scale": timeScale = double.Parse(Val(i++), System.Globalization.CultureInfo.InvariantCulture); break; // для тестов
+        case "--hold": hold = double.Parse(Val(i++), System.Globalization.CultureInfo.InvariantCulture); break;
+        case "--rest": rest = double.Parse(Val(i++), System.Globalization.CultureInfo.InvariantCulture); break;
+        case "--voice": voiceMode = Val(i++); break;
+        case "--seed": seed = int.Parse(Val(i++)); break;
         case "--roi":
         {
-            var parts = args[++i].Split(',');
+            var parts = Val(i++).Split(',');
             if (parts.Length != 4 ||
                 !ushort.TryParse(parts[0], out roiX) || !ushort.TryParse(parts[1], out roiY) ||
                 !ushort.TryParse(parts[2], out roiW) || !ushort.TryParse(parts[3], out roiH) ||
@@ -82,7 +90,16 @@ for (int i = 0; i < args.Length; i++)
             }
             break;
         }
+        default:
+            throw new ArgumentException($"неизвестная опция «{args[i]}»");
     }
+}
+}
+catch (Exception e) when (e is ArgumentException or FormatException or OverflowException)
+{
+    Console.WriteLine(e is ArgumentException ? e.Message : $"неверное число в аргументах: {e.Message}");
+    Console.WriteLine("пример: --host <IP-шлема> --fps 0 --record d:\\mouthrecon\\f01.mlrec --prompts face");
+    return 2;
 }
 if (verify) Console.WriteLine("сверка с тестовым шаблоном включена (источник должен слать --pattern)");
 if (promptsProgram != null && (promptsProgram is not ("tongue" or "face") || recordPath == null))
