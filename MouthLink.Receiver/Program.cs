@@ -28,7 +28,7 @@ using MouthLink.Receiver;
 //   --prompts face    полный сценарий выражений из каталога prompts/face.json (≈7.5 мин на круг,
 //                     время удержания у каждого выражения своё); --rounds по умолчанию 1
 //   --skip id,id      пропустить выражения (например tongue_roll, если язык не сворачивается)
-//   --groups g,g      только группы: jaw, lips, corners, nose, cheeks, tongue, emotion, speech
+//   --groups g,g      только группы: jaw, lips, corners, nose, cheeks, tongue, tongue_jaw, emotion, speech
 //   --catalog FILE    другой каталог выражений
 //   --rounds 3 --hold 4 --rest 2.5   (tongue) кругов, секунд на движение, секунд «убрать»
 //   --voice ru|en|off                 голос подсказок (ru — если в Windows есть русский голос)
