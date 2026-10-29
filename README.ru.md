@@ -110,6 +110,8 @@ python tools/mlrec_pair.py d:\mouthrecon\data\real "d:\mouthrecon\[st]*.mlrec" -
 cd training
 python train.py --data d:\mouthrecon\data\real --out runs\real --arch mnv3 --pretrained --cv
 ```
+Новые записи потом: спарить только их в отдельный датасет и дообучить готовую модель
+(`--data старый,новый --init runs\...\best.pt`) — раздел «Дообучение» в `training/README.md`.
 Для сессий лица вместо `--tongue` — `--face` (сессии можно смешивать, подсказки языка
 тоже понимаются):
 ```

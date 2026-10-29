@@ -11,6 +11,10 @@
   * Маскированный лосс: NaN в labels = канал неизвестен, в лосс не идёт.
   * Предобученный MobileNetV3-small (--arch mnv3 --pretrained): BN энкодера заморожен,
     lr энкодера в ~30 раз меньше, чем у головы.
+  * Дообучение (--init runs\face-final\best.pt): старт с уже обученной модели, по умолчанию
+    3 эпохи и lr 5e-4. Несколько датасетов сразу: --data data\face,data\face2 — новые записи
+    достаточно спарить отдельно, старые не пересобирать.
+  * Если датасет не помещается в память видеокарты, кадры остаются в ОЗУ и идут на GPU батчами.
 """
 import argparse, json, math, os, time
 import numpy as np
@@ -28,21 +32,66 @@ AUG = {
 }
 
 
-def load_dataset(path):
-    frames = np.load(os.path.join(path, "frames.npy"))
+def load_dataset(path, mmap=False):
+    frames = np.load(os.path.join(path, "frames.npy"), mmap_mode="r" if mmap else None)
     labels = np.load(os.path.join(path, "labels.npy")).astype(np.float32)
-    meta = json.load(open(os.path.join(path, "meta.json")))
+    meta = json.load(open(os.path.join(path, "meta.json"), encoding="utf-8"))
     gpath = os.path.join(path, "groups.npy")
     if os.path.exists(gpath):
         raw = np.load(gpath, allow_pickle=False)
-        _, groups = np.unique(raw, return_inverse=True)   # любые id → 0..G-1
-        names = [str(v) for v in np.unique(raw)]
+        uniq, groups = np.unique(raw, return_inverse=True)   # любые id → 0..G-1
+        # Имена сессий — по файлам записей из meta.json (f01, s03, …), иначе номер.
+        files = (meta.get("source") or {}).get("sessions") or []
+        names = [os.path.splitext(os.path.basename(files[v]))[0] if 0 <= v < len(files) else str(v)
+                 for v in uniq.tolist()]
     else:
         print("ВНИМАНИЕ: нет groups.npy — весь датасет считается одной сессией")
         groups = np.zeros(len(frames), np.int64)
         names = ["0"]
     assert len(frames) == len(labels) == len(groups)
     return frames, labels, groups.astype(np.int64), names, meta
+
+
+def load_datasets(paths):
+    """Один или несколько датасетов (одинаковые каналы и размер кадра) → один."""
+    if len(paths) == 1:
+        return load_dataset(paths[0])
+    parts = [load_dataset(p, mmap=True) for p in paths]
+    meta0 = parts[0][4]
+    for p, part in zip(paths[1:], parts[1:]):
+        m = part[4]
+        if m["channels"] != meta0["channels"] or (m["height"], m["width"]) != (meta0["height"], meta0["width"]):
+            raise SystemExit(f"{p}: каналы или размер кадра не совпадают с {paths[0]} "
+                             f"(собирай mlrec_pair с теми же --face/--tongue и --size)")
+    n = sum(len(part[0]) for part in parts)
+    frames = np.empty((n, meta0["height"], meta0["width"]), np.uint8)
+    labels, groups, names, o, g0 = [], [], [], 0, 0
+    for p, (f, y, g, nm, _) in zip(paths, parts):
+        frames[o:o + len(f)] = f
+        o += len(f)
+        labels.append(y); groups.append(g + g0); g0 += len(nm)
+        names += nm
+    dup = {x for x in names if names.count(x) > 1}
+    if dup:
+        print(f"ВНИМАНИЕ: сессии {sorted(dup)} есть в нескольких датасетах — кадры повторятся")
+        seen = {}
+        for i, x in enumerate(names):
+            seen[x] = seen.get(x, 0) + 1
+            if seen[x] > 1:
+                names[i] = f"{x}#{seen[x]}"
+    meta = dict(meta0)
+    meta["source"] = {"datasets": paths}
+    return frames, np.concatenate(labels), np.concatenate(groups), names, meta
+
+
+def frames_batch(X, ii, dev):
+    """Кадры батча на устройстве модели в [0,1]; X может лежать в ОЗУ, а не на GPU."""
+    if torch.is_tensor(ii) and ii.device != X.device:
+        ii = ii.cpu()
+    x = X[ii]
+    if x.device != dev:
+        x = x.to(dev, non_blocking=True)
+    return x.float()[:, None] / 255.0
 
 
 def flip_maps(meta, K):
@@ -113,7 +162,7 @@ def evaluate(net, X, Y, G, idx, batch, n_groups):
     g_cnt = torch.zeros(n_groups, dtype=torch.float64)
     for s in range(0, len(idx), batch):
         ii = idx[s:s + batch]
-        p = net(X[ii].float()[:, None] / 255.0).cpu().double()
+        p = net(frames_batch(X, ii, next(net.parameters()).device)).cpu().double()
         t = Y[ii].cpu().double()
         m = ~torch.isnan(t)
         e = (p - torch.nan_to_num(t)).abs() * m
@@ -148,7 +197,7 @@ def direction_scores(net, X, Y, idx, batch, channels):
     false = {i: [0, 0] for i in cols}
     for s in range(0, len(idx), batch):
         ii = idx[s:s + batch]
-        p = net(X[ii].float()[:, None] / 255.0).cpu()
+        p = net(frames_batch(X, ii, next(net.parameters()).device)).cpu()
         t = Y[ii].cpu()
         for i in cols:
             ti, pi = t[:, i], p[:, i]
@@ -175,7 +224,9 @@ def format_directions(d):
 def train_once(a, X, Y, G, tr_idx, va_idx, K, perm, mirror, n_groups, dev, log=print):
     torch.manual_seed(a.seed)
     gen = torch.Generator(device=dev).manual_seed(a.seed)
-    net = build_model(a.arch, K, width=a.width, pretrained=a.pretrained).to(dev)
+    net = build_model(a.arch, K, width=a.width, pretrained=a.pretrained and a.init_state is None).to(dev)
+    if a.init_state is not None:
+        net.load_state_dict(a.init_state)
     enc_lr = a.lr * (a.enc_lr_mult if a.pretrained else 1.0)
     opt = torch.optim.AdamW([
         dict(params=net.encoder.parameters(), lr=enc_lr),
@@ -200,7 +251,7 @@ def train_once(a, X, Y, G, tr_idx, va_idx, K, perm, mirror, n_groups, dev, log=p
         tl, tn = 0.0, 0
         for s in range(0, len(order) - bs + 1, bs):
             ii = order[s:s + bs]
-            x = X[ii].float()[:, None] / 255.0
+            x = frames_batch(X, ii, dev)
             y = Y[ii]
             if a.aug != "none":
                 x, y = augment(x, y, cfg, perm, mirror, gen)
@@ -229,7 +280,7 @@ def train_once(a, X, Y, G, tr_idx, va_idx, K, perm, mirror, n_groups, dev, log=p
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data", required=True)
+    ap.add_argument("--data", required=True, help="датасет или несколько через запятую")
     ap.add_argument("--out", required=True)
     ap.add_argument("--arch", choices=["tiny", "mnv3"], default="tiny")
     ap.add_argument("--pretrained", action="store_true", help="веса ImageNet для mnv3 (скачиваются torchvision)")
@@ -238,18 +289,37 @@ def main():
     ap.add_argument("--val-frac", type=float, default=0.2, help="доля сессий (или кадров) в валидации; 0 = учить на всём")
     ap.add_argument("--val-groups", default="", help="явный список сессий для валидации, через запятую")
     ap.add_argument("--cv", action="store_true", help="исключать каждую сессию по очереди и вывести сводку")
-    ap.add_argument("--epochs", type=int, default=10)
+    ap.add_argument("--init", help="дообучить: стартовать с этого чекпойнта (best.pt); arch берётся из него")
+    ap.add_argument("--epochs", type=int, default=None, help="по умолчанию 10, с --init 3")
     ap.add_argument("--batch", type=int, default=64)
-    ap.add_argument("--lr", type=float, default=2e-3)
+    ap.add_argument("--lr", type=float, default=None, help="по умолчанию 2e-3, с --init 5e-4")
     ap.add_argument("--enc-lr-mult", type=float, default=0.03, help="множитель lr энкодера при --pretrained")
     ap.add_argument("--width", type=int, default=16)
     ap.add_argument("--seed", type=int, default=0)
     a = ap.parse_args()
 
+    a.init_state = None
+    init_ck = None
+    if a.init:
+        init_ck = torch.load(a.init, map_location="cpu", weights_only=False)
+        a.arch, a.width = init_ck.get("arch", "tiny"), init_ck.get("width_mult", 16)
+        # mnv3 обучался от ImageNet с замороженным BN — дообучаем так же (без скачивания весов).
+        a.pretrained = init_ck.get("pretrained", a.arch == "mnv3")
+        a.init_state = init_ck["state"]
+        if a.cv:
+            raise SystemExit("--cv с --init нечестен: стартовая модель уже видела все старые сессии. "
+                             "Для оценки новой посадки: --val-groups <новая запись>, или tools/mlrec_eval.py")
+    a.epochs = a.epochs or (3 if a.init else 10)
+    a.lr = a.lr or (5e-4 if a.init else 2e-3)
     if a.pretrained and a.arch != "mnv3":
         raise SystemExit("--pretrained имеет смысл только с --arch mnv3")
 
-    frames, labels, groups, gnames, meta = load_dataset(a.data)
+    frames, labels, groups, gnames, meta = load_datasets([p.strip() for p in a.data.split(",") if p.strip()])
+    if init_ck is not None:
+        if init_ck["channels"] != meta["channels"] or (init_ck["height"], init_ck["width"]) != (meta["height"], meta["width"]):
+            raise SystemExit(f"{a.init}: каналы или размер кадра модели не совпадают с датасетом — "
+                             f"дообучать можно только на датасете того же вида (--face, --size)")
+        print(f"дообучение с {a.init}: эпох {a.epochs}, lr {a.lr}")
     K, n_groups = labels.shape[1], len(gnames)
     perm, mirror = flip_maps(meta, K)
     if AUG[a.aug]["flip"] and perm is None:
@@ -258,7 +328,14 @@ def main():
     print(f"датасет: {len(frames)} кадров {meta['width']}x{meta['height']}, каналов={K} {meta['channels']}, "
           f"сессий={n_groups}; arch={a.arch}{'+imagenet' if a.pretrained else ''}, aug={a.aug}, устройство={dev}")
 
-    X = torch.from_numpy(frames).to(dev)                      # uint8 [N,H,W]
+    X = torch.from_numpy(frames)                               # uint8 [N,H,W]
+    if dev.type == "cuda":
+        try:
+            X = X.to(dev)
+        except torch.cuda.OutOfMemoryError:
+            torch.cuda.empty_cache()
+            print(f"кадры ({X.numel() / 2**30:.1f} ГБ) не помещаются в видеокарту — остаются в ОЗУ, "
+                  f"на GPU идут батчами (медленнее)")
     Y = torch.from_numpy(labels).to(dev)
     G = torch.from_numpy(groups).to(dev)
     rng = np.random.default_rng(a.seed)
@@ -296,7 +373,14 @@ def main():
         if n_groups < 2:
             raise SystemExit("для --split sessions нужно минимум 2 сессии (или --split frames)")
         if a.val_groups:
-            vg = [gnames.index(s.strip()) for s in a.val_groups.split(",")]
+            vg = []
+            for s in (x.strip() for x in a.val_groups.split(",")):
+                if s in gnames:
+                    vg.append(gnames.index(s))
+                elif s.isdigit() and int(s) < n_groups:
+                    vg.append(int(s))
+                else:
+                    raise SystemExit(f"--val-groups: нет сессии «{s}»; есть: {', '.join(gnames)}")
         else:
             nv = max(1, round(a.val_frac * n_groups))
             vg = sorted(rng.choice(n_groups, nv, replace=False).tolist())
@@ -326,7 +410,8 @@ def main():
                       per_session={gnames[g]: v for g, v in vg.items()})
     ck = os.path.join(a.out, "best.pt")
     torch.save({"state": state, "arch": a.arch, "channels": meta["channels"], "height": meta["height"],
-                "width": meta["width"], "width_mult": a.width, "flip": meta.get("flip")}, ck)
+                "width": meta["width"], "width_mult": a.width, "flip": meta.get("flip"),
+                "pretrained": a.pretrained, "init": a.init}, ck)
     json.dump(report, open(os.path.join(a.out, "report.json"), "w"), indent=2, ensure_ascii=False)
     print(f"чекпойнт → {ck}, отчёт → {os.path.join(a.out, 'report.json')}, {time.time() - t0:.0f} с")
 

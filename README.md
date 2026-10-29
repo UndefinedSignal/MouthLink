@@ -112,6 +112,8 @@ python tools/mlrec_pair.py d:\mouthrecon\data\real "d:\mouthrecon\[st]*.mlrec" -
 cd training
 python train.py --data d:\mouthrecon\data\real --out runs\real --arch mnv3 --pretrained --cv
 ```
+New recordings later: pair only them into a separate dataset and fine-tune the existing model
+(`--data old,new --init runs\...\best.pt`) — see "Дообучение" in `training/README.md`.
 For face sessions use `--face` instead of `--tongue` (all sessions can be mixed —
 tongue prompts are understood too):
 ```
