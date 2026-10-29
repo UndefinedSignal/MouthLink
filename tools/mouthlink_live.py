@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-r"""MouthLink live: кадры камеры рта со шлема → ONNX-модель → направление языка в VRChat.
+r"""MouthLink live: кадры камеры рта со шлема → ONNX-модель → рот в VRChat.
 
 Подписывается на шлем (модуль PicoET-Enhance-MouthLink), на каждом кадре (90 Гц) прогоняет
-модель, сглаживает направления языка и шлёт их в UnifiedPicoModule (сборка с MouthLink
-tongue) на 127.0.0.1:9050. Модуль включает TongueLeft/Right/Up/Down только пока стоковый
-трекинг видит высунутый язык.
+модель и шлёт все её каналы (с именами, MLK2) в UnifiedPicoModule-MouthLink на 127.0.0.1:9050.
+Что из этого заменяет сток, а что нет, решает модуль: файл MouthLink.json рядом с его DLL
+(режим на канал: model / stock / blend:0.5 / max; правится на лету). Направления языка и
+TongueRoll модуль показывает только пока язык высунут.
 
   python tools/mouthlink_live.py --host <IP-шлема> --onnx training\runs\final\mouth.onnx
 
@@ -12,11 +13,14 @@ tongue) на 127.0.0.1:9050. Модуль включает TongueLeft/Right/Up/D
 Нужно: pip install onnxruntime pillow numpy (для GPU — onnxruntime-gpu / onnxruntime-directml).
 
 Опции:
-  --lo 0.15 --hi 0.55   выход модели ≤ lo → 0, ≥ hi → 1 (модель осторожная: позитивы часто < 0.5)
-  --tau 0.04            постоянная сглаживания, с (0 — без сглаживания)
+  --lo 0.15 --hi 0.55   для каналов, которых нет у стока (язык, раздельные щёки, напряжение губ):
+                        выход ≤ lo → 0, ≥ hi → 1 (модель осторожная: позитивы часто < 0.5).
+                        Стоковые каналы модель предсказывает в шкале стока — их не растягиваем.
+  --tau 0.04            постоянная сглаживания всех каналов, с (0 — без сглаживания)
+  --proto 1             старый формат MLK1 (только язык) для модуля «MouthLink tongue ml1»
   --meta FILE           описание модели (.json от export_onnx.py или meta.json датасета),
                         если рядом с .onnx нет <имя>.json
-  --out 127.0.0.1:9050  куда слать MLK1
+  --out 127.0.0.1:9050  куда слать
   --cpu                 только CPU
 """
 import argparse, json, os, socket, struct, sys, threading, time, zlib
@@ -24,6 +28,12 @@ import argparse, json, os, socket, struct, sys, threading, time, zlib
 import numpy as np
 
 DIRS = ["TongueLeft", "TongueRight", "TongueUp", "TongueDown"]
+# Каналы стока (шкала стока, lo/hi не применяется); остальные — «новые», размеченные 0/1.
+STOCK = {"CheekPuff", "CheekSquintL", "CheekSquintR", "JawForward", "JawLeft", "JawOpen", "JawRight",
+         "MouthClose", "MouthDimpleL", "MouthDimpleR", "MouthFrownL", "MouthFrownR", "MouthFunnel", "MouthLeft",
+         "MouthLowerDownL", "MouthLowerDownR", "MouthPressL", "MouthPressR", "MouthPucker", "MouthRight",
+         "MouthRollLower", "MouthRollUpper", "MouthShrugLower", "MouthShrugUpper", "MouthSmileL", "MouthSmileR",
+         "MouthStretchL", "MouthStretchR", "MouthUpperUpL", "MouthUpperUpR", "NoseSneerL", "NoseSneerR", "TongueOut"}
 HDR = 42
 
 
@@ -144,6 +154,7 @@ def main():
     ap.add_argument("--lo", type=float, default=0.15)
     ap.add_argument("--hi", type=float, default=0.55)
     ap.add_argument("--tau", type=float, default=0.04)
+    ap.add_argument("--proto", type=int, choices=[1, 2], default=2)
     ap.add_argument("--cpu", action="store_true")
     ap.add_argument("--seconds", type=float, default=0, help="остановиться через N секунд (для тестов)")
     a = ap.parse_args()
@@ -155,11 +166,15 @@ def main():
 
     meta, meta_src = load_meta(a.onnx, a.meta)
     channels = meta["channels"]
-    missing = [d for d in DIRS if d not in channels]
-    if missing:
-        raise SystemExit(f"в модели нет каналов {missing}: нужна модель, обученная с mlrec_pair --tongue")
-    i_dirs = [channels.index(d) for d in DIRS]
+    has_dirs = all(d in channels for d in DIRS)
+    if a.proto == 1 and not has_dirs:
+        raise SystemExit("для --proto 1 нужна модель с направлениями языка (mlrec_pair --tongue/--face)")
+    i_dirs = [channels.index(d) for d in DIRS] if has_dirs else []
     i_out = channels.index("TongueOut") if "TongueOut" in channels else None
+    rare = np.array([c not in STOCK for c in channels])
+    names = ",".join(channels).encode("utf-8")
+    if len(names) > 65535 or len(channels) > 256:
+        raise SystemExit("слишком много каналов для MLK2")
 
     avail = ort.get_available_providers()
     want = ["CPUExecutionProvider"] if a.cpu else [p for p in ("CUDAExecutionProvider", "DmlExecutionProvider",
@@ -168,7 +183,9 @@ def main():
     inp = sess.get_inputs()[0]
     H, W = int(inp.shape[2]), int(inp.shape[3])
     print(f"модель: {a.onnx} ({len(channels)} каналов, вход {W}x{H}, {sess.get_providers()[0]}); описание: {meta_src}")
-    print(f"направления → {a.out}; lo={a.lo} hi={a.hi} tau={a.tau}s. Ctrl+C — выход.")
+    what = (f"все {len(channels)} каналов (MLK2; новых {int(rare.sum())}: lo/hi)" if a.proto == 2
+            else "направления языка (MLK1)")
+    print(f"{what} → {a.out}; lo={a.lo} hi={a.hi} tau={a.tau}s. Ctrl+C — выход.")
 
     oh, op = a.out.rsplit(":", 1)
     out_addr = (oh, int(op))
@@ -177,7 +194,7 @@ def main():
     src = Source(a.host, a.ctrl, a.listen)
     src.start()
 
-    smooth = np.zeros(4, np.float32)
+    smooth = np.zeros(len(channels), np.float32)
     last_cap = None
     seq = 0
     t0 = time.monotonic()
@@ -220,15 +237,20 @@ def main():
             inf_ms += (time.perf_counter() - t1) * 1000
             n_inf += 1
 
-            raw = y[i_dirs].astype(np.float32)
+            raw = np.clip(np.asarray(y, np.float32), 0, 1)
             dt = 1 / 90 if last_cap is None else max(0.0, min(0.2, (f["cap"] - last_cap) / 1e9))
             last_cap = f["cap"]
             alpha = 1.0 if a.tau <= 0 else 1.0 - np.exp(-dt / a.tau)
             smooth += (raw - smooth) * alpha
-            mapped = np.clip((smooth - a.lo) / (a.hi - a.lo), 0, 1)
-            tout = float(np.clip(y[i_out], 0, 1)) if i_out is not None else 0.0
+            vals = np.where(rare, np.clip((smooth - a.lo) / (a.hi - a.lo), 0, 1), np.clip(smooth, 0, 1)).astype(np.float32)
+            tout = float(vals[i_out]) if i_out is not None else 0.0
             seq = (seq + 1) & 0xFFFFFFFF
-            out.sendto(struct.pack("<4sHHIQ5f", b"MLK1", 1, 5, seq, f["cap"], *mapped.tolist(), tout), out_addr)
+            if a.proto == 2:
+                pkt = (struct.pack("<4sHHIQH", b"MLK2", 2, len(channels), seq, f["cap"], len(names)) + names
+                       + vals.astype("<f4").tobytes())
+            else:
+                pkt = struct.pack("<4sHHIQ5f", b"MLK1", 1, 5, seq, f["cap"], *vals[i_dirs].tolist(), tout)
+            out.sendto(pkt, out_addr)
 
             now = time.monotonic()
             if now - stat_t >= 1.0:
@@ -236,9 +258,11 @@ def main():
                     fr = src.frames
                 rx = (fr - frames_at) / (now - stat_t)
                 frames_at = fr
-                bars = "  ".join(f"{d[6:]:<5}{'#' * int(round(v * 10)):<10}{v:.2f}" for d, v in zip(DIRS, mapped))
+                bars = "  ".join(f"{channels[i][6:]:<5}{'#' * int(round(vals[i] * 10)):<10}{vals[i]:.2f}" for i in i_dirs)
+                top = "" if a.proto == 1 else "  |  " + " ".join(
+                    f"{channels[i]} {vals[i]:.2f}" for i in np.argsort(-vals)[:4] if vals[i] >= 0.1)
                 print(f"кадры {rx:5.1f}/с  модель {n_inf / (now - stat_t):5.1f}/с {inf_ms / max(1, n_inf):4.1f} мс  "
-                      f"TongueOut {tout:.2f}  |  {bars}")
+                      f"TongueOut {tout:.2f}  |  {bars}{top}")
                 stat_t, n_inf, inf_ms = now, 0, 0.0
     except KeyboardInterrupt:
         pass

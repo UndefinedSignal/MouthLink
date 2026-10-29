@@ -187,6 +187,27 @@ PONG (источник → ПК): то же плюс `t_src_ns` (u64) — вре
 версия протокола, модель, состояние камер (есть ли клиент/кадры),
 родные ширина/высота/формат, если известны. По образцу discovery в QuestLHSync.
 
+## Выход на ПК: MLK2 (mouthlink_live.py → UnifiedPicoModule-MouthLink)
+
+Только loopback, `127.0.0.1:9050`, одна датаграмма на кадр камеры, little-endian:
+
+| смещение | поле | |
+|---|---|---|
+| 0 | `"MLK2"` | магия |
+| 4 | u16 version = 2 | |
+| 6 | u16 count | число каналов, 1…256 |
+| 8 | u32 seq | счётчик пакетов |
+| 12 | u64 source_ns | `capture_ns` кадра |
+| 20 | u16 names_len | |
+| 22 | names | UTF-8, `count` имён через `,` |
+| 22+names_len | f32[count] | значения в [0, 1] |
+
+Каналы адресуются по имени, а не по позиции: 33 стоковых имени PICO (`MouthSmileL`, `JawOpen`,
+…) и новые (`TongueLeft/Right/Up/Down`, `TongueRoll`, `CheekPuffLeft/Right`,
+`CheekSuckLeft/Right`, `MouthTightenerLeft/Right`). Неизвестные имена модуль пропускает.
+Старый MLK1 (только язык: `"MLK1"` | u16 1 | u16 count≥5 | u32 seq | u64 source_ns |
+f32 TongueLeft, TongueRight, TongueUp, TongueDown, TongueOut) модуль тоже принимает.
+
 ## Версионирование
 
 `version` в каждом заголовке. ПК принимает свою мажорную версию, прочие

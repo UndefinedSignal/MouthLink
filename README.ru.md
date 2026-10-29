@@ -126,25 +126,33 @@ python tools/mlrec_pair.py d:\mouthrecon\data\face "d:\mouthrecon\[stf]*.mlrec" 
 направлений `train.py` печатает «узнаёт X %, ложных Y %» — обычный MAE для таких редких
 каналов ничего не говорит. Подробности — `training/README.md`.
 
-## Вживую в VRChat (направление языка)
+## Вживую в VRChat
 
 1. Финальная модель на всех сессиях и экспорт (пишет `mouth.onnx` + `mouth.json`):
    ```
    cd training
-   python train.py --data d:\mouthrecon\data\real --out runs\final --arch mnv3 --pretrained --val-frac 0
-   python export_onnx.py --ckpt runs\final\best.pt --out runs\final\mouth.onnx
+   python train.py --data d:\mouthrecon\data\face --out runs\face-final --arch mnv3 --pretrained --val-frac 0
+   python export_onnx.py --ckpt runs\face-final\best.pt --out runs\face-final\mouth.onnx
    ```
-2. Поставить сборку *UnifiedPicoModule-MouthLink* (слушает `127.0.0.1:9050` и выставляет
-   `TongueLeft/Right/Up/Down`, только пока стоковый `TongueOut` поднят).
+2. Поставить сборку *UnifiedPicoModule-MouthLink* (DLL менять при закрытом VRCFT). Она
+   слушает `127.0.0.1:9050` и накладывает значения модели поверх стока.
 3. Бридж, VRCFaceTracking и VRChat как обычно; **MouthLink.Receiver не запускать** (шлем
    отдаёт поток одному подписчику). Затем:
    ```
    pip install onnxruntime pillow numpy
-   python tools/mouthlink_live.py --host <IP-шлема> --onnx training\runs\final\mouth.onnx
+   python tools/mouthlink_live.py --host <IP-шлема> --onnx training\runs\face-final\mouth.onnx
    ```
-   Скрипт прогоняет модель на каждом кадре (90 кадров/с), сглаживает (`--tau`), переводит
-   выход модели через `--lo/--hi` и раз в секунду печатает четыре направления. У аватара
-   должны быть параметры направления языка (например, VRCFT `TongueX`/`TongueY`).
+   Скрипт прогоняет модель на каждом кадре (90 кадров/с), сглаживает (`--tau`) и шлёт все
+   каналы модели с именами (MLK2). Каналы, которых нет у стока (направления языка, раздельные
+   щёки, напряжение губ, TongueRoll), растягиваются через `--lo/--hi`; стоковые идут как есть.
+   Раз в секунду печатает направления языка и самые активные каналы.
+4. Что брать по каждому каналу, решает модуль — файл `MouthLink.json` рядом с его DLL
+   (`%APPDATA%\VRCFaceTracking\CustomLibs\<модуль>\`), перечитывается через секунду после
+   сохранения: `"model"` (по умолчанию), `"stock"`, `"blend:0.5"`, `"max"`, например
+   `"Modes": { "JawOpen": "stock", "MouthSmileL": "blend:0.5" }`. Направления языка и
+   TongueRoll видны только пока язык высунут. Без свежих значений модели (скрипт остановлен)
+   за 150 мс всё возвращается к стоку. Глаза не трогаются никогда.
+   Старый формат «только язык» остался: `--proto 1`.
 
 ## Без шлема
 
@@ -167,7 +175,5 @@ python tools/mlrec_check.py pattern.mlrec --pattern
 ## Дальше
 
 - Направление языка по сессиям с подсказками (в работе), затем круговое движение.
-- Калибровка всего лица (`--prompts face`): обучение уже работает; вывод новых каналов
-  в VRCFaceTracking вживую — следующий шаг.
-- Модуль VRCFaceTracking: инференс ONNX на ПК, слияние со стоком (сток как пол/гейт).
+- Всё лицо вживую в VRChat: подбор «модель / сток» по каналам на живых сессиях.
 - Опционально: сжатие (lz4) и белый список адресов на стороне шлема.

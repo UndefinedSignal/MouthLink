@@ -129,25 +129,33 @@ unknown (NaN, ignored by the loss) elsewhere. For direction channels `train.py` 
 "recognised X % / false Y %" — plain MAE is meaningless for such rare channels.
 See `training/README.md` (Russian) for details.
 
-## Live in VRChat (tongue direction)
+## Live in VRChat
 
 1. Train the final model on all sessions and export it (writes `mouth.onnx` + `mouth.json`):
    ```
    cd training
-   python train.py --data d:\mouthrecon\data\real --out runs\final --arch mnv3 --pretrained --val-frac 0
-   python export_onnx.py --ckpt runs\final\best.pt --out runs\final\mouth.onnx
+   python train.py --data d:\mouthrecon\data\face --out runs\face-final --arch mnv3 --pretrained --val-frac 0
+   python export_onnx.py --ckpt runs\face-final\best.pt --out runs\face-final\mouth.onnx
    ```
-2. Install the *UnifiedPicoModule-MouthLink* build of UnifiedPicoModule (it listens on
-   `127.0.0.1:9050` and sets `TongueLeft/Right/Up/Down` only while stock `TongueOut` is up).
+2. Install the *UnifiedPicoModule-MouthLink* build of UnifiedPicoModule (VRCFT closed while
+   replacing the DLL). It listens on `127.0.0.1:9050` and lays the model values over stock.
 3. Bridge, VRCFaceTracking and VRChat as usual; **MouthLink.Receiver must not run** (the
    headset serves one subscriber). Then:
    ```
    pip install onnxruntime pillow numpy
-   python tools/mouthlink_live.py --host <headset-IP> --onnx training\runs\final\mouth.onnx
+   python tools/mouthlink_live.py --host <headset-IP> --onnx training\runs\face-final\mouth.onnx
    ```
-   It infers every frame (90 fps), smooths (`--tau`), maps the model output with `--lo/--hi`
-   and prints the four directions once a second. Your avatar needs tongue direction
-   parameters (e.g. VRCFT `TongueX`/`TongueY`).
+   It infers every frame (90 fps), smooths (`--tau`) and sends all model channels by name
+   (MLK2). Channels stock lacks (tongue directions, separate cheeks, lip tighteners,
+   TongueRoll) are stretched with `--lo/--hi`; stock channels are sent as predicted. Once a
+   second it prints the tongue directions and the most active channels.
+4. Per channel, the module decides what to use — `MouthLink.json` next to its DLL
+   (`%APPDATA%\VRCFaceTracking\CustomLibs\<module>\`), re-read within a second of saving:
+   `"model"` (default), `"stock"`, `"blend:0.5"`, `"max"`, e.g.
+   `"Modes": { "JawOpen": "stock", "MouthSmileL": "blend:0.5" }`. Tongue directions and
+   TongueRoll show only while TongueOut is up. Without fresh model values (script stopped)
+   everything falls back to stock within 150 ms. Eye tracking is never touched.
+   The older tongue-only format is still available: `--proto 1`.
 
 ## Without a headset
 
@@ -170,7 +178,5 @@ stream has no authentication — use it on a trusted LAN only.
 ## Roadmap
 
 - Tongue direction from prompted sessions (in progress), then circular motion.
-- Full-face calibration (`--prompts face`): training done offline; live output of the
-  new channels into VRCFaceTracking is next.
-- VRCFaceTracking module: ONNX inference on the PC, merged with stock (stock as a floor/gate).
+- Full face live in VRChat: per-channel tuning of model vs stock on real sessions.
 - Optional compression (lz4) and an address allowlist on the headset side.
