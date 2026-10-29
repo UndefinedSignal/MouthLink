@@ -63,6 +63,7 @@ Eyes stay on the stock path (PicoET-Enhance → PicoFacialBridge → UnifiedPico
 | `tools/mlrec_check.py` | Recording health check: rate, gaps, frozen/black/overexposed frames |
 | `tools/mlrec2png.py` | Export a recording to PNG |
 | `tools/mlrec_pair.py` | Frames + stock (+ prompts) → training dataset |
+| `tools/mlrec_eval.py` | Per-pose check of a model on a prompted recording |
 | `training/` | PyTorch training (tiny CNN / MobileNetV3), masked loss for partial labels, session-wise CV, ONNX export |
 
 Build: .NET 8 SDK (`dotnet build` in the solution root). Python 3 with NumPy for the
@@ -128,6 +129,13 @@ taken from the prompts inside prompted intervals, 0 where stock says the tongue 
 unknown (NaN, ignored by the loss) elsewhere. For direction channels `train.py` reports
 "recognised X % / false Y %" — plain MAE is meaningless for such rare channels.
 See `training/README.md` (Russian) for details.
+
+**Check a model pose by pose** — best on a fresh session the model has not seen:
+```
+python tools/mlrec_eval.py --onnx training\runs\face-final\mouth.onnx d:\mouthrecon\f09.mlrec
+```
+For every prompt it prints target, stock and raw model output per channel, the hit rate,
+which other channels the model lights up, and false positives on "relax".
 
 ## Live in VRChat
 
