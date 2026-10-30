@@ -97,15 +97,15 @@ installed in Windows, otherwise English; `--voice en|off`), 3 shuffled rounds of
 ```
 dotnet run --project MouthLink.Receiver -- --host <headset-IP> --fps 0 --record d:\mouthrecon\f01.mlrec --prompts face
 ```
-72 prompts from `prompts/face.json` in 10 groups — jaw, lips, mouth corners, nose,
+75 prompts from `prompts/face.json` in 10 groups — jaw, lips, mouth corners, nose,
 cheeks, tongue, tongue with the mouth wide open / almost closed (`tongue_jaw`), open mouth
 with the tongue inside (`mouth_open`, teaches "no tongue"), emotions, speech — shuffled, each followed by a short "relax" pause.
 Simple poses are held 4 s; one-sided ones (left/right cheek, corner, tightener) 6 s with
 a longer settle, because they take a moment to find; emotions 5 s, speech 9–12 s.
-One round ≈ 9.5 min. Options: `--skip tongue_roll,...` (expressions you cannot do),
+One round ≈ 10 min. Options: `--skip tongue_roll,...` (expressions you cannot do),
 `--groups jaw,lips,...`, `--rounds N`, `--time-scale 1.5` (everything slower),
 `--catalog my.json` (own catalog). Tongue only, without "up":
-`--groups tongue,tongue_jaw,mouth_open --skip tongue_up,tongue_roll --rounds 3` (≈ 7 min). The catalog adds channels the stock model lacks:
+`--groups tongue,tongue_jaw,mouth_open --skip tongue_up,tongue_roll --rounds 3` (≈ 8 min). The catalog adds channels the stock model lacks:
 `CheekPuffLeft/Right`, `CheekSuckLeft/Right`, `MouthTightenerLeft/Right`, `TongueRoll`.
 
 **Build a dataset and train:**

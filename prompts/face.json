@@ -113,6 +113,12 @@
      "hold": 4.5, "settle": 1.0, "labels": {"TongueOut": 1, "TongueLeft": 0.7, "TongueDown": 0.7}},
     {"id": "tongue_right_down", "group": "tongue", "ru": "Язык вправо-вниз, по диагонали", "en": "Tongue down and to the right, diagonally",
      "hold": 4.5, "settle": 1.0, "labels": {"TongueOut": 1, "TongueRight": 0.7, "TongueDown": 0.7}},
+    {"id": "tongue_left_max", "group": "tongue", "ru": "Язык влево до упора, в самый уголок", "en": "Tongue all the way left, into the corner",
+     "hold": 4.5, "settle": 1.0, "labels": {"TongueOut": 1, "TongueLeft": 1}},
+    {"id": "tongue_right_max", "group": "tongue", "ru": "Язык вправо до упора, в самый уголок", "en": "Tongue all the way right, into the corner",
+     "hold": 4.5, "settle": 1.0, "labels": {"TongueOut": 1, "TongueRight": 1}},
+    {"id": "tongue_sweep", "group": "tongue", "ru": "Высунь язык и медленно води влево-вправо до упора", "en": "Tongue out, slowly sweep it left and right all the way",
+     "hold": 10, "settle": 1.0, "labels": {"TongueOut": 1}, "unknown": ["TongueLeft", "TongueRight", "TongueUp", "TongueDown"]},
     {"id": "tongue_roll", "group": "tongue", "optional": true, "ru": "Язык трубочкой", "en": "Roll your tongue into a tube",
      "hold": 6, "settle": 2.0, "labels": {"TongueOut": 1, "TongueRoll": 1}},
 

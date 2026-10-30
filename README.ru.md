@@ -95,15 +95,15 @@ dotnet run --project MouthLink.Receiver -- --host <IP-шлема> --fps 0 --reco
 ```
 dotnet run --project MouthLink.Receiver -- --host <IP-шлема> --fps 0 --record d:\mouthrecon\f01.mlrec --prompts face
 ```
-72 подсказки из `prompts/face.json` в 10 группах — челюсть, губы, уголки рта, нос, щёки,
+75 подсказок из `prompts/face.json` в 10 группах — челюсть, губы, уголки рта, нос, щёки,
 язык, язык при широко открытом / почти закрытом рте (`tongue_jaw`), открытый рот с языком
 внутри (`mouth_open`, учит «языка нет»), эмоции, речь — в случайном порядке, после каждой короткое «расслабь лицо». Простые
 позы держатся 4 с; односторонние (одна щека, один уголок, одна сторона губ) — 6 с и с
-большей паузой на «найти» движение; эмоции 5 с, речь 9–12 с. Один круг ≈ 9,5 мин.
+большей паузой на «найти» движение; эмоции 5 с, речь 9–12 с. Один круг ≈ 10 мин.
 Опции: `--skip tongue_roll,...` (что не получается), `--groups jaw,lips,...`,
 `--rounds N`, `--time-scale 1.5` (всё медленнее), `--catalog my.json` (свой каталог).
 Только язык и без «вверх»: `--groups tongue,tongue_jaw,mouth_open --skip tongue_up,tongue_roll --rounds 3`
-(≈ 7 мин). Каталог добавляет каналы, которых нет у стока: `CheekPuffLeft/Right`,
+(≈ 8 мин). Каталог добавляет каналы, которых нет у стока: `CheekPuffLeft/Right`,
 `CheekSuckLeft/Right`, `MouthTightenerLeft/Right`, `TongueRoll`.
 
 **Датасет и обучение:**

@@ -76,21 +76,25 @@ PROMPT_DIRS = {
 
 
 def load_catalog(path, channels):
-    """id → (список (индекс канала, значение), settle_ns, tail_ns, zero_new)."""
+    """id → (список (индекс канала, значение), settle_ns, tail_ns, zero_new, индексы unknown).
+
+    unknown — каналы, которые в этой подсказке размечать нельзя (NaN): например, направления
+    языка, пока его медленно водят из стороны в сторону."""
     c = json.load(open(path, encoding="utf-8"))
     d = c.get("defaults", {})
     ci = {ch: i for i, ch in enumerate(channels)}
     specs = {}
     rest = c.get("rest", {})
-    specs[rest.get("id", "neutral")] = ([], int(d.get("settle", 0.8) * 1e9), int(d.get("tail", 0.2) * 1e9), True)
+    specs[rest.get("id", "neutral")] = ([], int(d.get("settle", 0.8) * 1e9), int(d.get("tail", 0.2) * 1e9), True, [])
     for it in c["items"]:
-        bad = [k for k in it.get("labels", {}) if k not in ci]
+        bad = [k for k in list(it.get("labels", {})) + list(it.get("unknown", [])) if k not in ci]
         if bad:
             raise SystemExit(f"{path}: в выражении {it['id']} неизвестные каналы {bad}")
         specs[it["id"]] = ([(ci[k], float(v)) for k, v in it.get("labels", {}).items()],
                            int(it.get("settle", d.get("settle", 0.8)) * 1e9),
                            int(it.get("tail", d.get("tail", 0.2)) * 1e9),
-                           bool(it.get("zero_new", d.get("zero_new", True))))
+                           bool(it.get("zero_new", d.get("zero_new", True))),
+                           [ci[k] for k in it.get("unknown", [])])
     return c, specs
 
 
@@ -298,7 +302,7 @@ def main():
                     if spec is None:
                         unknown_labels.add(lab)
                     else:
-                        pairs, settle, tail, zero_new = spec
+                        pairs, settle, tail, zero_new, unknown = spec
                         if s0 + settle <= cap <= e0 - tail:
                             if zero_new:
                                 face_vec[zero_idx] = 0
@@ -307,6 +311,8 @@ def main():
                                     rec = item_stats.setdefault(lab, {}).setdefault(channels[idx], [0.0, 0, val])
                                     rec[0] += float(np.clip(vec[idx], 0, 1)); rec[1] += 1
                                 face_vec[idx] = val
+                            if unknown:
+                                face_vec[unknown] = np.nan
                             in_prompt = True
             k += 1
             # Кадры внутри подсказок редкие и ценные: прореживание --every их не трогает.
