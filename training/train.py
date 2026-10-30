@@ -52,11 +52,29 @@ def load_dataset(path, mmap=False):
     return frames, labels, groups.astype(np.int64), names, meta
 
 
-def load_datasets(paths):
-    """Один или несколько датасетов (одинаковые каналы и размер кадра) → один."""
-    if len(paths) == 1:
+def load_datasets(specs, seed=0):
+    """Один или несколько датасетов (одинаковые каналы и размер кадра) → один.
+
+    «путь@0.3» — взять из датасета случайные 30 % кадров (все сессии остаются): при дообучении
+    старые данные нужны, чтобы модель их не забыла, но не обязательно целиком."""
+    paths, fracs = [], []
+    for sp in specs:
+        path, _, frac = sp.rpartition("@") if "@" in sp else (sp, "", "")
+        f = float(frac) if frac else 1.0
+        if not 0 < f <= 1:
+            raise SystemExit(f"{sp}: доля после @ должна быть в (0, 1]")
+        paths.append(path); fracs.append(f)
+    if len(paths) == 1 and fracs[0] == 1:
         return load_dataset(paths[0])
-    parts = [load_dataset(p, mmap=True) for p in paths]
+    rng = np.random.default_rng(seed)
+    parts = []
+    for p, f in zip(paths, fracs):
+        fr, y, g, nm, m = load_dataset(p, mmap=True)
+        if f < 1:
+            keep = np.sort(rng.choice(len(fr), max(1, int(len(fr) * f)), replace=False))
+            print(f"{p}: беру {len(keep)} из {len(fr)} кадров ({f:.0%})")
+            fr, y, g = _Rows(fr, keep), y[keep], g[keep]
+        parts.append((fr, y, g, nm, m))
     meta0 = parts[0][4]
     for p, part in zip(paths[1:], parts[1:]):
         m = part[4]
@@ -67,7 +85,9 @@ def load_datasets(paths):
     frames = np.empty((n, meta0["height"], meta0["width"]), np.uint8)
     labels, groups, names, o, g0 = [], [], [], 0, 0
     for p, (f, y, g, nm, _) in zip(paths, parts):
-        frames[o:o + len(f)] = f
+        for c in range(0, len(f), 4096):                       # кусками: без лишней копии в ОЗУ
+            chunk = f[c:c + 4096]
+            frames[o + c:o + c + len(chunk)] = chunk
         o += len(f)
         labels.append(y); groups.append(g + g0); g0 += len(nm)
         names += nm
@@ -80,8 +100,21 @@ def load_datasets(paths):
             if seen[x] > 1:
                 names[i] = f"{x}#{seen[x]}"
     meta = dict(meta0)
-    meta["source"] = {"datasets": paths}
+    meta["source"] = {"datasets": paths, "fractions": fracs}
     return frames, np.concatenate(labels), np.concatenate(groups), names, meta
+
+
+class _Rows:
+    """Ленивая выборка строк memmap-массива (кадры читаются только при копировании)."""
+
+    def __init__(self, arr, idx):
+        self.arr, self.idx = arr, idx
+
+    def __len__(self):
+        return len(self.idx)
+
+    def __getitem__(self, sl):
+        return self.arr[self.idx[sl]]
 
 
 def frames_batch(X, ii, dev):
@@ -249,7 +282,12 @@ def train_once(a, X, Y, G, tr_idx, va_idx, K, perm, mirror, n_groups, dev, log=p
             freeze_encoder_bn(net)
         order = tr_idx_t[torch.randperm(len(tr_idx_t), device=dev, generator=gen)]
         tl, tn = 0.0, 0
-        for s in range(0, len(order) - bs + 1, bs):
+        n_steps = max(1, (len(order) - bs) // bs + 1)
+        every, t_ep = max(1, n_steps // 10), time.time()
+        for k, s in enumerate(range(0, len(order) - bs + 1, bs), 1):
+            if k % every == 0 and k < n_steps:
+                el = time.time() - t_ep
+                log(f"    эпоха {ep}: {100 * k // n_steps:3d}%  ({k}/{n_steps} шагов, ещё ~{el / k * (n_steps - k):.0f} с)")
             ii = order[s:s + bs]
             x = frames_batch(X, ii, dev)
             y = Y[ii]
@@ -280,7 +318,7 @@ def train_once(a, X, Y, G, tr_idx, va_idx, K, perm, mirror, n_groups, dev, log=p
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data", required=True, help="датасет или несколько через запятую")
+    ap.add_argument("--data", required=True, help="датасет или несколько через запятую; «путь@0.3» — 30 %% кадров")
     ap.add_argument("--out", required=True)
     ap.add_argument("--arch", choices=["tiny", "mnv3"], default="tiny")
     ap.add_argument("--pretrained", action="store_true", help="веса ImageNet для mnv3 (скачиваются torchvision)")
@@ -317,7 +355,9 @@ def main():
     if a.pretrained and a.arch != "mnv3":
         raise SystemExit("--pretrained имеет смысл только с --arch mnv3")
 
-    frames, labels, groups, gnames, meta = load_datasets([p.strip() for p in a.data.split(",") if p.strip()])
+    t_load = time.time()
+    frames, labels, groups, gnames, meta = load_datasets([p.strip() for p in a.data.split(",") if p.strip()], a.seed)
+    print(f"загрузка датасетов: {time.time() - t_load:.0f} с")
     if init_ck is not None:
         if init_ck["channels"] != meta["channels"] or (init_ck["height"], init_ck["width"]) != (meta["height"], meta["width"]):
             raise SystemExit(f"{a.init}: каналы или размер кадра модели не совпадают с датасетом — "
