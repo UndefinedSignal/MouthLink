@@ -296,6 +296,9 @@ def main():
     ap.add_argument("--enc-lr-mult", type=float, default=0.03, help="множитель lr энкодера при --pretrained")
     ap.add_argument("--width", type=int, default=16)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--frames-on", choices=["auto", "gpu", "cpu"], default="auto",
+                    help="где держать кадры: auto — в видеокарте, если влезают с запасом --vram-reserve")
+    ap.add_argument("--vram-reserve", type=int, default=2, help="ГБ видеопамяти оставить под модель (auto)")
     a = ap.parse_args()
 
     a.init_state = None
@@ -328,14 +331,25 @@ def main():
     print(f"датасет: {len(frames)} кадров {meta['width']}x{meta['height']}, каналов={K} {meta['channels']}, "
           f"сессий={n_groups}; arch={a.arch}{'+imagenet' if a.pretrained else ''}, aug={a.aug}, устройство={dev}")
 
+    N = len(frames)
     X = torch.from_numpy(frames)                               # uint8 [N,H,W]
     if dev.type == "cuda":
-        try:
-            X = X.to(dev)
-        except torch.cuda.OutOfMemoryError:
-            torch.cuda.empty_cache()
-            print(f"кадры ({X.numel() / 2**30:.1f} ГБ) не помещаются в видеокарту — остаются в ОЗУ, "
-                  f"на GPU идут батчами (медленнее)")
+        # На Windows драйвер при нехватке видеопамяти не падает, а молча выносит часть в общую
+        # память (медленно), поэтому решаем заранее: оставляем запас под модель и активации.
+        free, _ = torch.cuda.mem_get_info()
+        need = X.numel() + (a.vram_reserve << 30)
+        if a.frames_on == "cpu" or (a.frames_on == "auto" and need > free):
+            print(f"кадры ({X.numel() / 2**30:.1f} ГБ) остаются в ОЗУ (свободно в видеокарте "
+                  f"{free / 2**30:.1f} ГБ, запас {a.vram_reserve} ГБ) — на GPU идут батчами")
+        else:
+            try:
+                X = X.to(dev)
+                del frames                                     # копия в ОЗУ больше не нужна
+                frames = None
+            except torch.cuda.OutOfMemoryError:
+                torch.cuda.empty_cache()
+                print(f"кадры ({X.numel() / 2**30:.1f} ГБ) не помещаются в видеокарту — остаются в ОЗУ, "
+                      f"на GPU идут батчами (медленнее)")
     Y = torch.from_numpy(labels).to(dev)
     G = torch.from_numpy(groups).to(dev)
     rng = np.random.default_rng(a.seed)
@@ -368,7 +382,7 @@ def main():
 
     # Обычный режим: одно разбиение.
     if a.val_frac <= 0:
-        tr, va, val_names = np.arange(len(frames)), np.array([], int), []
+        tr, va, val_names = np.arange(N), np.array([], int), []
     elif a.split == "sessions":
         if n_groups < 2:
             raise SystemExit("для --split sessions нужно минимум 2 сессии (или --split frames)")
@@ -389,8 +403,8 @@ def main():
         val_names = [gnames[g] for g in vg]
     else:
         print("ВНИМАНИЕ: деление по кадрам — оценка завышена, кадры одной сессии попадают и в train, и в val")
-        idx = rng.permutation(len(frames))
-        nv = int(len(frames) * a.val_frac)
+        idx = rng.permutation(N)
+        nv = int(N * a.val_frac)
         va, tr, val_names = idx[:nv], idx[nv:], ["(случайные кадры)"]
     print(f"train={len(tr)} кадров, val={len(va)} кадров; валидационные сессии: {val_names}")
 
