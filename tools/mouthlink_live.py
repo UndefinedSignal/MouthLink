@@ -17,6 +17,9 @@ TongueRoll модуль показывает только пока язык вы
                         выход ≤ lo → 0, ≥ hi → 1 (модель осторожная: позитивы часто < 0.5).
                         Стоковые каналы модель предсказывает в шкале стока — их не растягиваем.
   --tau 0.04            постоянная сглаживания всех каналов, с (0 — без сглаживания)
+  --attack 0.15         для языка (TongueOut, направления, TongueRoll) нарастание медленнее: короткий
+                        всплеск при открытии рта не успевает «выбросить» язык; убирается он по --tau.
+                        0 — как остальные каналы
   --show A,B            раз в секунду печатать эти каналы: максимум «сырого» выхода модели за
                         секунду → что ушло в модуль (например --show CheekSuckLeft,CheekSuckRight)
   --proto 1             старый формат MLK1 (только язык) для модуля «MouthLink tongue ml1»
@@ -158,6 +161,7 @@ def main():
     ap.add_argument("--tau", type=float, default=0.04)
     ap.add_argument("--proto", type=int, choices=[1, 2], default=2)
     ap.add_argument("--show", default="")
+    ap.add_argument("--attack", type=float, default=0.0)
     ap.add_argument("--cpu", action="store_true")
     ap.add_argument("--seconds", type=float, default=0, help="остановиться через N секунд (для тестов)")
     a = ap.parse_args()
@@ -175,6 +179,7 @@ def main():
     i_dirs = [channels.index(d) for d in DIRS] if has_dirs else []
     i_out = channels.index("TongueOut") if "TongueOut" in channels else None
     rare = np.array([c not in STOCK for c in channels])
+    tongue = np.array([c.startswith("Tongue") for c in channels])
     show = [x.strip() for x in a.show.split(",") if x.strip()]
     bad = [x for x in show if x not in channels]
     if bad:
@@ -194,7 +199,8 @@ def main():
     print(f"модель: {a.onnx} ({len(channels)} каналов, вход {W}x{H}, {sess.get_providers()[0]}); описание: {meta_src}")
     what = (f"все {len(channels)} каналов (MLK2; новых {int(rare.sum())}: lo/hi)" if a.proto == 2
             else "направления языка (MLK1)")
-    print(f"{what} → {a.out}; lo={a.lo} hi={a.hi} tau={a.tau}s. Ctrl+C — выход.")
+    print(f"{what} → {a.out}; lo={a.lo} hi={a.hi} tau={a.tau}s"
+          + (f" attack(язык)={a.attack}s" if a.attack > 0 else "") + ". Ctrl+C — выход.")
 
     oh, op = a.out.rsplit(":", 1)
     out_addr = (oh, int(op))
@@ -250,6 +256,10 @@ def main():
             dt = 1 / 90 if last_cap is None else max(0.0, min(0.2, (f["cap"] - last_cap) / 1e9))
             last_cap = f["cap"]
             alpha = 1.0 if a.tau <= 0 else 1.0 - np.exp(-dt / a.tau)
+            if a.attack > 0:
+                # Язык: нарастание с --attack, спад с --tau (асимметричное сглаживание).
+                up = 1.0 - np.exp(-dt / a.attack)
+                alpha = np.where(tongue & (raw > smooth), up, alpha)
             smooth += (raw - smooth) * alpha
             np.maximum(peak, raw, out=peak)
             vals = np.where(rare, np.clip((smooth - a.lo) / (a.hi - a.lo), 0, 1), np.clip(smooth, 0, 1)).astype(np.float32)

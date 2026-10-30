@@ -116,6 +116,17 @@
     {"id": "tongue_roll", "group": "tongue", "optional": true, "ru": "Язык трубочкой", "en": "Roll your tongue into a tube",
      "hold": 6, "settle": 2.0, "labels": {"TongueOut": 1, "TongueRoll": 1}},
 
+    {"id": "open_wide_in", "group": "mouth_open", "ru": "Широко открой рот, язык внутри", "en": "Open your mouth wide, tongue inside",
+     "hold": 4.5, "settle": 1.0, "labels": {"TongueOut": 0}},
+    {"id": "open_shout", "group": "mouth_open", "ru": "Рот широко, как в крике, уголки вниз, язык внутри", "en": "Mouth wide as in a shout, corners down, tongue inside",
+     "hold": 4.5, "settle": 1.0, "labels": {"TongueOut": 0}},
+    {"id": "open_yawn", "group": "mouth_open", "ru": "Изобрази зевок", "en": "Fake a yawn",
+     "hold": 6, "settle": 1.0, "labels": {"TongueOut": 0}},
+    {"id": "open_close", "group": "mouth_open", "ru": "Открывай и закрывай рот, язык внутри", "en": "Keep opening and closing your mouth, tongue inside",
+     "hold": 8, "settle": 0.5, "labels": {"TongueOut": 0}},
+    {"id": "open_aaa", "group": "mouth_open", "ru": "Протяжно: А-а-а", "en": "Long: Ah-ah-ah",
+     "hold": 5, "settle": 0.8, "labels": {"TongueOut": 0}},
+
     {"id": "tongue_out_wide", "group": "tongue_jaw", "ru": "Язык прямо, рот широко открыт", "en": "Tongue straight out, mouth wide open",
      "hold": 4.5, "settle": 1.0, "labels": {"TongueOut": 1}},
     {"id": "tongue_out_lips", "group": "tongue_jaw", "ru": "Кончик языка между губами, рот почти закрыт", "en": "Tongue tip between the lips, mouth almost closed",

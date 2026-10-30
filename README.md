@@ -97,15 +97,15 @@ installed in Windows, otherwise English; `--voice en|off`), 3 shuffled rounds of
 ```
 dotnet run --project MouthLink.Receiver -- --host <headset-IP> --fps 0 --record d:\mouthrecon\f01.mlrec --prompts face
 ```
-67 prompts from `prompts/face.json` in 9 groups — jaw, lips, mouth corners, nose,
-cheeks, tongue, tongue with the mouth wide open / almost closed (`tongue_jaw`), emotions,
-speech — shuffled, each followed by a short "relax" pause.
+72 prompts from `prompts/face.json` in 10 groups — jaw, lips, mouth corners, nose,
+cheeks, tongue, tongue with the mouth wide open / almost closed (`tongue_jaw`), open mouth
+with the tongue inside (`mouth_open`, teaches "no tongue"), emotions, speech — shuffled, each followed by a short "relax" pause.
 Simple poses are held 4 s; one-sided ones (left/right cheek, corner, tightener) 6 s with
 a longer settle, because they take a moment to find; emotions 5 s, speech 9–12 s.
-One round ≈ 9 min. Options: `--skip tongue_roll,...` (expressions you cannot do),
+One round ≈ 9.5 min. Options: `--skip tongue_roll,...` (expressions you cannot do),
 `--groups jaw,lips,...`, `--rounds N`, `--time-scale 1.5` (everything slower),
 `--catalog my.json` (own catalog). Tongue only, without "up":
-`--groups tongue,tongue_jaw --skip tongue_up,tongue_roll --rounds 3` (≈ 4 min). The catalog adds channels the stock model lacks:
+`--groups tongue,tongue_jaw,mouth_open --skip tongue_up,tongue_roll --rounds 3` (≈ 7 min). The catalog adds channels the stock model lacks:
 `CheekPuffLeft/Right`, `CheekSuckLeft/Right`, `MouthTightenerLeft/Right`, `TongueRoll`.
 
 **Build a dataset and train:**
@@ -160,7 +160,9 @@ which other channels the model lights up, and false positives on "relax".
    It infers every frame (90 fps), smooths (`--tau`) and sends all model channels by name
    (MLK2). Channels stock lacks (tongue directions, separate cheeks, lip tighteners,
    TongueRoll) are stretched with `--lo/--hi`; stock channels are sent as predicted. Once a
-   second it prints the tongue directions and the most active channels.
+   second it prints the tongue directions and the most active channels. `--attack 0.15`
+   makes the tongue rise slower than it falls, so a short false spike when the mouth opens
+   does not throw the tongue out (costs ~0.15 s of delay when it really comes out).
 4. Per channel, the module decides what to use — `MouthLink.json` next to its DLL
    (`%APPDATA%\VRCFaceTracking\CustomLibs\<module>\`), re-read within a second of saving:
    `"model"` (default), `"stock"`, `"blend:0.5"`, `"max"`, e.g.
