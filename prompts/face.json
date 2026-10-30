@@ -109,6 +109,10 @@
      "hold": 4.5, "settle": 1.0, "labels": {"TongueOut": 1, "TongueUp": 1}},
     {"id": "tongue_down", "group": "tongue", "ru": "Язык вниз", "en": "Tongue down",
      "hold": 4.5, "settle": 1.0, "labels": {"TongueOut": 1, "TongueDown": 1}},
+    {"id": "tongue_left_down", "group": "tongue", "ru": "Язык влево-вниз, по диагонали", "en": "Tongue down and to the left, diagonally",
+     "hold": 4.5, "settle": 1.0, "labels": {"TongueOut": 1, "TongueLeft": 0.7, "TongueDown": 0.7}},
+    {"id": "tongue_right_down", "group": "tongue", "ru": "Язык вправо-вниз, по диагонали", "en": "Tongue down and to the right, diagonally",
+     "hold": 4.5, "settle": 1.0, "labels": {"TongueOut": 1, "TongueRight": 0.7, "TongueDown": 0.7}},
     {"id": "tongue_roll", "group": "tongue", "optional": true, "ru": "Язык трубочкой", "en": "Roll your tongue into a tube",
      "hold": 6, "settle": 2.0, "labels": {"TongueOut": 1, "TongueRoll": 1}},
 
