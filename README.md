@@ -64,6 +64,7 @@ Eyes stay on the stock path (PicoET-Enhance → PicoFacialBridge → UnifiedPico
 | `tools/mlrec2png.py` | Export a recording to PNG |
 | `tools/mlrec_pair.py` | Frames + stock (+ prompts) → training dataset |
 | `tools/mlrec_eval.py` | Per-pose check of a model on a prompted recording |
+| `tools/mlk_pattern.py` | Sends fixed tongue poses to the VRCFT module — checks the avatar without the model |
 | `training/` | PyTorch training (tiny CNN / MobileNetV3), masked loss for partial labels, session-wise CV, ONNX export |
 
 Build: .NET 8 SDK (`dotnet build` in the solution root). Python 3 with NumPy for the
@@ -97,7 +98,7 @@ installed in Windows, otherwise English; `--voice en|off`), 3 shuffled rounds of
 ```
 dotnet run --project MouthLink.Receiver -- --host <headset-IP> --fps 0 --record d:\mouthrecon\f01.mlrec --prompts face
 ```
-75 prompts from `prompts/face.json` in 10 groups — jaw, lips, mouth corners, nose,
+78 prompts from `prompts/face.json` in 10 groups — jaw, lips, mouth corners, nose,
 cheeks, tongue, tongue with the mouth wide open / almost closed (`tongue_jaw`), open mouth
 with the tongue inside (`mouth_open`, teaches "no tongue"), emotions, speech — shuffled, each followed by a short "relax" pause.
 Simple poses are held 4 s; one-sided ones (left/right cheek, corner, tightener) 6 s with
