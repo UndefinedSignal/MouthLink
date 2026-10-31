@@ -2,6 +2,9 @@
 
 **English** | [Русский](README.ru.md)
 
+<p align="center"><img src="docs/media/mouthlink-demo.gif" alt="Tongue and mouth from a MouthLink model on a VRChat avatar" width="480"></p>
+<p align="center"><a href="docs/media/mouthlink-demo.mp4">Video (MP4)</a></p>
+
 Custom mouth tracking for the PICO 4 Pro. Frames from the headset's mouth camera are
 streamed to the PC, where your own model turns them into blendshapes for VRChat via
 VRCFaceTracking. The goal is what stock tracking cannot do: personal calibration for
@@ -27,7 +30,9 @@ Eyes stay on the stock path (PicoET-Enhance → PicoFacialBridge → UnifiedPico
                                          │ tools/mlrec_pair.py → dataset     │
                                          │ training/ → model (ONNX)          │
                                          │        │                          │
-                                         │        ▼ (planned) VRCFT module   │
+                                         │        ▼                          │
+                                         │ UnifiedPicoModule-MouthLink       │
+                                         │  (VRCFT: camera → model → VRChat) │
                                          └───────────────────────────────────┘
 ```
 
@@ -144,33 +149,40 @@ which other channels the model lights up, and false positives on "relax".
 
 ## Live in VRChat
 
-1. Train the final model on all sessions and export it (writes `mouth.onnx` + `mouth.json`):
+1. Train the final model and export it (writes `mouth.onnx` + `mouth.json`):
    ```
    cd training
    python train.py --data d:\mouthrecon\data\face --out runs\face-final --arch mnv3 --pretrained --val-frac 0
    python export_onnx.py --ckpt runs\face-final\best.pt --out runs\face-final\mouth.onnx
    ```
 2. Install the *UnifiedPicoModule-MouthLink* build of UnifiedPicoModule (VRCFT closed while
-   replacing the DLL). It listens on `127.0.0.1:9050` and lays the model values over stock.
-3. Bridge, VRCFaceTracking and VRChat as usual; **MouthLink.Receiver must not run** (the
-   headset serves one subscriber). Then:
-   ```
-   pip install onnxruntime pillow numpy
-   python tools/mouthlink_live.py --host <headset-IP> --onnx training\runs\face-final\mouth.onnx
-   ```
-   It infers every frame (90 fps), smooths (`--tau`) and sends all model channels by name
-   (MLK2). Channels stock lacks (tongue directions, separate cheeks, lip tighteners,
-   TongueRoll) are stretched with `--lo/--hi`; stock channels are sent as predicted. Once a
-   second it prints the tongue directions and the most active channels. `--attack 0.15`
-   makes the tongue rise slower than it falls, so a short false spike when the mouth opens
-   does not throw the tongue out (costs ~0.15 s of delay when it really comes out).
-4. Per channel, the module decides what to use — `MouthLink.json` next to its DLL
-   (`%APPDATA%\VRCFaceTracking\CustomLibs\<module>\`), re-read within a second of saving:
-   `"model"` (default), `"stock"`, `"blend:0.5"`, `"max"`, e.g.
-   `"Modes": { "JawOpen": "stock", "MouthSmileL": "blend:0.5" }`. Tongue directions and
-   TongueRoll show only while TongueOut is up. Without fresh model values (script stopped)
-   everything falls back to stock within 150 ms. Eye tracking is never touched.
-   The older tongue-only format is still available: `--proto 1`.
+   replacing the DLL) and copy `mouth.onnx` + `mouth.json` into a `MouthLink` folder next to
+   its DLL (`%APPDATA%\VRCFaceTracking\CustomLibs\<module>\MouthLink\`).
+3. Start the bridge, VRCFaceTracking and VRChat as usual — that's all. The module finds the
+   headset through the bridge connection, subscribes to the mouth camera, runs the model on
+   the CPU (≈2–3 ms per frame on one thread, ONNX Runtime from VRCFT itself) and lays the
+   result over stock. A newer `mouth.onnx` copied over the old one is picked up on the fly.
+4. Settings — `MouthLink.json` next to the module DLL, re-read within a second of saving:
+   - per channel: `"model"` (default), `"stock"`, `"blend:0.5"`, `"max"`, e.g.
+     `"Modes": { "JawOpen": "stock", "MouthSmileL": "blend:0.5" }`;
+   - channels stock lacks (tongue directions, separate cheeks, lip tighteners, TongueRoll)
+     are stretched: model output `≤ Lo` → 0, `≥ Hi` → 1 (`"Lo": 0.15, "Hi": 0.55`, per channel
+     `"HiChannels": { "TongueRight": 0.45 }`); stock channels go as predicted;
+   - smoothing: `"Filter": "euro"` (One Euro: steady at rest, quick on fast moves;
+     `MinCutoff`, `Beta`) or `"ema"` (`Tau`);
+   - `"Headset": "<headset-IP>"` if the address should not come from the bridge.
+
+   Tongue directions and TongueRoll show only while TongueOut is up. Without fresh model
+   values everything falls back to stock within 150 ms. Eye tracking is never touched.
+
+**Recording while VRCFT runs.** The headset streams to one subscriber. Before recording with
+`MouthLink.Receiver`, set `"Source": "udp"` in `MouthLink.json` (the module lets go of the
+camera within a second); set it back to `"auto"` afterwards.
+
+**Python live path** (for experiments, `"Source": "udp"`): `tools/mouthlink_live.py --host
+<headset-IP> --onnx …\mouth.onnx` does the same on the PC side and sends the values to the
+module over `127.0.0.1:9050` (MLK2); options `--lo/--hi/--hi-ch`, `--filter euro`, `--attack`,
+`--show`, `--proto 1` (tongue only).
 
 ## Without a headset
 

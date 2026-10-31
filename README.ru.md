@@ -2,6 +2,9 @@
 
 [English](README.md) | **Русский**
 
+<p align="center"><img src="docs/media/mouthlink-demo.gif" alt="Язык и рот от модели MouthLink на аватаре VRChat" width="480"></p>
+<p align="center"><a href="docs/media/mouthlink-demo.mp4">Видео (MP4)</a></p>
+
 Свой трекинг рта для PICO 4 Pro. Кадры камеры рта уходят со шлема на ПК, там своя
 модель считает блендшейпы и отдаёт их в VRChat через VRCFaceTracking. Цель — то, чего
 сток не умеет: калибровка под своё лицо и каналы, которых в стоке нет совсем, в первую
@@ -26,7 +29,9 @@ PICO по языку выдаёт только одно число `TongueOut`.
                                          │ tools/mlrec_pair.py → датасет     │
                                          │ training/ → модель (ONNX)         │
                                          │        │                          │
-                                         │        ▼ (план) модуль VRCFT      │
+                                         │        ▼                          │
+                                         │ UnifiedPicoModule-MouthLink       │
+                                         │ (VRCFT: камера → модель → VRChat) │
                                          └───────────────────────────────────┘
 ```
 
@@ -141,33 +146,41 @@ python tools/mlrec_eval.py --onnx training\runs\face-final\mouth.onnx d:\mouthre
 
 ## Вживую в VRChat
 
-1. Финальная модель на всех сессиях и экспорт (пишет `mouth.onnx` + `mouth.json`):
+1. Финальная модель и экспорт (пишет `mouth.onnx` + `mouth.json`):
    ```
    cd training
    python train.py --data d:\mouthrecon\data\face --out runs\face-final --arch mnv3 --pretrained --val-frac 0
    python export_onnx.py --ckpt runs\face-final\best.pt --out runs\face-final\mouth.onnx
    ```
-2. Поставить сборку *UnifiedPicoModule-MouthLink* (DLL менять при закрытом VRCFT). Она
-   слушает `127.0.0.1:9050` и накладывает значения модели поверх стока.
-3. Бридж, VRCFaceTracking и VRChat как обычно; **MouthLink.Receiver не запускать** (шлем
-   отдаёт поток одному подписчику). Затем:
-   ```
-   pip install onnxruntime pillow numpy
-   python tools/mouthlink_live.py --host <IP-шлема> --onnx training\runs\face-final\mouth.onnx
-   ```
-   Скрипт прогоняет модель на каждом кадре (90 кадров/с), сглаживает (`--tau`) и шлёт все
-   каналы модели с именами (MLK2). Каналы, которых нет у стока (направления языка, раздельные
-   щёки, напряжение губ, TongueRoll), растягиваются через `--lo/--hi`; стоковые идут как есть.
-   Раз в секунду печатает направления языка и самые активные каналы. `--attack 0.15` — язык
-   нарастает медленнее, чем убирается: короткий ложный всплеск при открытии рта не
-   «выбрасывает» язык (цена — ~0,15 с задержки, когда язык показываешь на самом деле).
-4. Что брать по каждому каналу, решает модуль — файл `MouthLink.json` рядом с его DLL
-   (`%APPDATA%\VRCFaceTracking\CustomLibs\<модуль>\`), перечитывается через секунду после
-   сохранения: `"model"` (по умолчанию), `"stock"`, `"blend:0.5"`, `"max"`, например
-   `"Modes": { "JawOpen": "stock", "MouthSmileL": "blend:0.5" }`. Направления языка и
-   TongueRoll видны только пока язык высунут. Без свежих значений модели (скрипт остановлен)
+2. Поставить сборку *UnifiedPicoModule-MouthLink* (DLL менять при закрытом VRCFT) и положить
+   `mouth.onnx` + `mouth.json` в папку `MouthLink` рядом с её DLL
+   (`%APPDATA%\VRCFaceTracking\CustomLibs\<модуль>\MouthLink\`).
+3. Бридж, VRCFaceTracking и VRChat как обычно — и всё. Модуль сам находит шлем по
+   подключению бриджа, подписывается на камеру рта, крутит модель на CPU (≈2–3 мс на кадр в
+   один поток, ONNX Runtime — тот, что уже есть в VRCFT) и накладывает результат поверх
+   стока. Новый `mouth.onnx` поверх старого подхватывается на лету.
+4. Настройки — `MouthLink.json` рядом с DLL модуля, перечитывается через секунду после
+   сохранения:
+   - по каналам: `"model"` (по умолчанию), `"stock"`, `"blend:0.5"`, `"max"`, например
+     `"Modes": { "JawOpen": "stock", "MouthSmileL": "blend:0.5" }`;
+   - каналы, которых нет у стока (направления языка, раздельные щёки, напряжение губ,
+     TongueRoll), растягиваются: выход модели `≤ Lo` → 0, `≥ Hi` → 1 (`"Lo": 0.15,
+     "Hi": 0.55`, по каналу — `"HiChannels": { "TongueRight": 0.45 }`); стоковые идут как есть;
+   - сглаживание: `"Filter": "euro"` (One Euro: в покое ровно, на быстрых движениях без
+     задержки; `MinCutoff`, `Beta`) или `"ema"` (`Tau`);
+   - `"Headset": "<IP-шлема>"`, если адрес не должен браться из бриджа.
+
+   Направления языка и TongueRoll видны только пока язык высунут. Без свежих значений модели
    за 150 мс всё возвращается к стоку. Глаза не трогаются никогда.
-   Старый формат «только язык» остался: `--proto 1`.
+
+**Запись при запущенном VRCFT.** Шлем отдаёт поток одному подписчику. Перед записью через
+`MouthLink.Receiver` поставь в `MouthLink.json` `"Source": "udp"` (модуль отпустит камеру за
+секунду), после — верни `"auto"`.
+
+**Путь через Python** (для экспериментов, `"Source": "udp"`): `tools/mouthlink_live.py --host
+<IP-шлема> --onnx …\mouth.onnx` делает то же на стороне ПК и шлёт значения в модуль по
+`127.0.0.1:9050` (MLK2); опции `--lo/--hi/--hi-ch`, `--filter euro`, `--attack`, `--show`,
+`--proto 1` (только язык).
 
 ## Без шлема
 
