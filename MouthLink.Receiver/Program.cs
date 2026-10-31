@@ -28,6 +28,7 @@ using MouthLink.Receiver;
 //   --prompts face    полный сценарий выражений из каталога prompts/face.json (≈7.5 мин на круг,
 //                     время удержания у каждого выражения своё); --rounds по умолчанию 1
 //   --skip id,id      пропустить выражения (например tongue_roll, если язык не сворачивается)
+//   --only id,id      только эти выражения (по id из каталога), например правая сторона языка
 //   --groups g,g      только группы: jaw, lips, corners, nose, cheeks, tongue, tongue_jaw, mouth_open, emotion, speech
 //   --catalog FILE    другой каталог выражений
 //   --rounds 3 --hold 4 --rest 2.5   (tongue) кругов, секунд на движение, секунд «убрать»
@@ -45,7 +46,7 @@ bool wantStock = true;                              // --no-stock выключа
 string? promptsProgram = null; int rounds = 3; double hold = 4, rest = 2.5; string voiceMode = "ru";
 int seed = Environment.TickCount;
 bool roundsSet = false; string? catalogPath = null; double timeScale = 1;
-var skipIds = new HashSet<string>(); HashSet<string>? onlyGroups = null;
+var skipIds = new HashSet<string>(); HashSet<string>? onlyGroups = null; HashSet<string>? onlyIds = null;
 
 // Значение опции: следующий аргумент, если он есть и сам не опция.
 string Val(int i) =>
@@ -70,6 +71,7 @@ for (int i = 0; i < args.Length; i++)
         case "--prompts": promptsProgram = Val(i++); break;
         case "--rounds": rounds = int.Parse(Val(i++)); roundsSet = true; break;
         case "--skip": foreach (var x in Val(i++).Split(',', StringSplitOptions.RemoveEmptyEntries)) skipIds.Add(x.Trim()); break;
+        case "--only": onlyIds = new HashSet<string>(Val(i++).Split(',', StringSplitOptions.RemoveEmptyEntries).Select(x => x.Trim())); break;
         case "--groups": onlyGroups = new HashSet<string>(Val(i++).Split(',', StringSplitOptions.RemoveEmptyEntries).Select(x => x.Trim())); break;
         case "--catalog": catalogPath = Val(i++); break;
         case "--time-scale": timeScale = double.Parse(Val(i++), System.Globalization.CultureInfo.InvariantCulture); break; // для тестов
@@ -222,12 +224,14 @@ if (promptsProgram != null)
     if (promptsProgram == "face")
     {
         var (catalog, catalogSource) = Prompter.LoadFaceCatalog(catalogPath);
-        var unknown = skipIds.Where(id => catalog.Items.All(it => it.Id != id)).ToList();
+        var unknown = skipIds.Concat(onlyIds ?? []).Where(id => catalog.Items.All(it => it.Id != id)).ToList();
+        if (onlyIds != null)
+            foreach (var it in catalog.Items) if (!onlyIds.Contains(it.Id)) skipIds.Add(it.Id);
         if (unknown.Count > 0) Console.WriteLine($"  ! в каталоге нет выражений: {string.Join(", ", unknown)}");
         steps = Prompter.Face(catalog, roundsSet ? rounds : 1, seed, skipIds, onlyGroups, timeScale);
         int n = steps.Count(st => st.Label.Length > 0 && st.Label != catalog.Rest.Id);
         Console.WriteLine($"каталог: {catalogSource}; выражений в сценарии: {n}");
-        if (n == 0) { Console.WriteLine("после --skip/--groups не осталось ни одного выражения"); return 2; }
+        if (n == 0) { Console.WriteLine("после --skip/--groups/--only не осталось ни одного выражения"); return 2; }
     }
     else steps = Prompter.Tongue(rounds, hold * timeScale, rest * timeScale, seed);
     double total = 0; foreach (var st in steps) total += st.Seconds;

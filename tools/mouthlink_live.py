@@ -16,6 +16,7 @@ TongueRoll модуль показывает только пока язык вы
   --lo 0.15 --hi 0.55   для каналов, которых нет у стока (язык, раздельные щёки, напряжение губ):
                         выход ≤ lo → 0, ≥ hi → 1 (модель осторожная: позитивы часто < 0.5).
                         Стоковые каналы модель предсказывает в шкале стока — их не растягиваем.
+  --hi-ch TongueRight=0.6[,…]  свой --hi для отдельных каналов (слабый канал доходит до 1 раньше)
   --tau 0.04            постоянная сглаживания всех каналов, с (0 — без сглаживания)
   --attack 0.15         для языка (TongueOut, направления, TongueRoll) нарастание медленнее: короткий
                         всплеск при открытии рта не успевает «выбросить» язык; убирается он по --tau.
@@ -162,6 +163,7 @@ def main():
     ap.add_argument("--proto", type=int, choices=[1, 2], default=2)
     ap.add_argument("--show", default="")
     ap.add_argument("--attack", type=float, default=0.0)
+    ap.add_argument("--hi-ch", default="")
     ap.add_argument("--cpu", action="store_true")
     ap.add_argument("--seconds", type=float, default=0, help="остановиться через N секунд (для тестов)")
     a = ap.parse_args()
@@ -180,6 +182,17 @@ def main():
     i_out = channels.index("TongueOut") if "TongueOut" in channels else None
     rare = np.array([c not in STOCK for c in channels])
     tongue = np.array([c.startswith("Tongue") for c in channels])
+    hi = np.full(len(channels), a.hi, np.float32)
+    for part in filter(None, (x.strip() for x in a.hi_ch.split(","))):
+        name, _, v = part.partition("=")
+        if name not in channels:
+            raise SystemExit(f"--hi-ch: в модели нет канала {name}")
+        try:
+            hi[channels.index(name)] = float(v)
+        except ValueError:
+            raise SystemExit(f"--hi-ch: {part} — нужно КАНАЛ=число")
+        if not a.lo < float(v) <= 1:
+            raise SystemExit(f"--hi-ch: {name} — нужно --lo < значение ≤ 1")
     show = [x.strip() for x in a.show.split(",") if x.strip()]
     bad = [x for x in show if x not in channels]
     if bad:
@@ -199,7 +212,7 @@ def main():
     print(f"модель: {a.onnx} ({len(channels)} каналов, вход {W}x{H}, {sess.get_providers()[0]}); описание: {meta_src}")
     what = (f"все {len(channels)} каналов (MLK2; новых {int(rare.sum())}: lo/hi)" if a.proto == 2
             else "направления языка (MLK1)")
-    print(f"{what} → {a.out}; lo={a.lo} hi={a.hi} tau={a.tau}s"
+    print(f"{what} → {a.out}; lo={a.lo} hi={a.hi}" + (f" ({a.hi_ch})" if a.hi_ch else "") + f" tau={a.tau}s"
           + (f" attack(язык)={a.attack}s" if a.attack > 0 else "") + ". Ctrl+C — выход.")
 
     oh, op = a.out.rsplit(":", 1)
@@ -262,7 +275,7 @@ def main():
                 alpha = np.where(tongue & (raw > smooth), up, alpha)
             smooth += (raw - smooth) * alpha
             np.maximum(peak, raw, out=peak)
-            vals = np.where(rare, np.clip((smooth - a.lo) / (a.hi - a.lo), 0, 1), np.clip(smooth, 0, 1)).astype(np.float32)
+            vals = np.where(rare, np.clip((smooth - a.lo) / (hi - a.lo), 0, 1), np.clip(smooth, 0, 1)).astype(np.float32)
             tout = float(vals[i_out]) if i_out is not None else 0.0
             seq = (seq + 1) & 0xFFFFFFFF
             if a.proto == 2:

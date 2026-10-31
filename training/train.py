@@ -135,6 +135,31 @@ class _Rows:
         return self.arr[self.idx[sl]]
 
 
+def oversample(tr, labels, channels, spec, rng, log=print):
+    """--oversample TongueRight:3,TongueDown:2 — кадры, где у канала метка ≥ 0.5, попадают в эпоху
+    в N раз чаще (повтор индексов; аугментация делает повторы разными)."""
+    if not spec:
+        return tr
+    extra = []
+    for part in spec.split(","):
+        name, _, k = part.strip().partition(":")
+        if name not in channels:
+            raise SystemExit(f"--oversample: нет канала {name}; есть: {', '.join(channels)}")
+        k = float(k or 2)
+        if k < 1:
+            raise SystemExit("--oversample: множитель должен быть ≥ 1")
+        col = labels[tr, channels.index(name)]
+        pos = tr[np.nan_to_num(col, nan=0.0) >= 0.5]
+        whole, frac = int(k) - 1, k - int(k)
+        add = [np.repeat(pos, whole)] if whole else []
+        if frac > 0 and len(pos):
+            add.append(rng.choice(pos, int(len(pos) * frac), replace=False))
+        n_add = sum(len(x) for x in add)
+        log(f"oversample {name}: позитивов {len(pos)}, ×{k:g} → +{n_add} кадров в эпохе")
+        extra += add
+    return np.concatenate([tr] + extra) if extra else tr
+
+
 def frames_batch(X, ii, dev):
     """Кадры батча на устройстве модели в [0,1]; X может лежать в ОЗУ, а не на GPU."""
     if torch.is_tensor(ii) and ii.device != X.device:
@@ -357,6 +382,8 @@ def main():
     ap.add_argument("--enc-lr-mult", type=float, default=0.03, help="множитель lr энкодера при --pretrained")
     ap.add_argument("--width", type=int, default=16)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--oversample", default="", help="КАНАЛ:N[,…] — кадры с меткой канала ≥ 0.5 чаще в N раз, "
+                    "например TongueRight:3")
     ap.add_argument("--frames-on", choices=["auto", "gpu", "cpu"], default="auto",
                     help="где держать кадры: auto — в видеокарте, если влезают с запасом --vram-reserve")
     ap.add_argument("--vram-reserve", type=int, default=2, help="ГБ видеопамяти оставить под модель (auto)")
@@ -429,7 +456,8 @@ def main():
         folds = []
         for g in range(n_groups):
             va = np.flatnonzero(groups == g)
-            tr = np.flatnonzero(groups != g)
+            tr = oversample(np.flatnonzero(groups != g), labels, meta["channels"], a.oversample, rng,
+                            log=lambda *_: None)
             print(f"фолд {g + 1}/{n_groups}: исключена сессия '{gnames[g]}' ({len(va)} кадров)", flush=True)
             t_fold = time.time()
             net, _, _ = train_once(a, X, Y, G, tr, va, K, perm, mirror, n_groups, dev, log=lambda *_: None,
@@ -478,6 +506,7 @@ def main():
         idx = rng.permutation(N)
         nv = int(N * a.val_frac)
         va, tr, val_names = idx[:nv], idx[nv:], ["(случайные кадры)"]
+    tr = oversample(tr, labels, meta["channels"], a.oversample, rng)
     print(f"train={len(tr)} кадров, val={len(va)} кадров; валидационные сессии: {val_names}")
 
     net, state, hist = train_once(a, X, Y, G, tr, va, K, perm, mirror, n_groups, dev)
