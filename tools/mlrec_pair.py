@@ -314,6 +314,11 @@ def main():
                             if unknown:
                                 face_vec[unknown] = np.nan
                             in_prompt = True
+                        else:
+                            # Переход внутри подсказки (settle/tail): поза ещё не принята или уже
+                            # снимается. Сток часто не видит язык вбок (TongueOut ~0.1), и правило
+                            # «сток < порога → 0» размечало бы высунутый язык как убранный.
+                            face_vec[zero_idx] = np.nan
             k += 1
             # Кадры внутри подсказок редкие и ценные: прореживание --every их не трогает.
             if (k - 1) % a.every and not in_prompt:
