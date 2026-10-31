@@ -199,8 +199,15 @@ exercised on synthetic data with `training/make_synth_dataset.py`.
 Mouth-camera frames are images of your face. Recordings, stock and prompt logs, PNG
 exports, datasets and model weights stay local: `.gitignore` excludes `*.mlrec`,
 `*.stock.csv`, `*.prompts.csv`, `*.npy`, `*.onnx`, `*.pt`, `data/`, `runs/`. Only code
-goes into the repository. The live view and player listen on loopback only. The UDP
-stream has no authentication — use it on a trusted LAN only.
+goes into the repository. The live view and player listen on loopback only.
+
+The camera stream is unencrypted — use a trusted network and never forward UDP 9040/9041
+from the internet. The headset (PicoET-Enhance-MouthLink 2.4.2-ml4+) accepts `SUBSCRIBE`
+only from private addresses by default; `picoet.sh mouthlink-allow <PC-IP>` narrows it to
+your PC, and a running stream cannot be taken over by another address. On the PC,
+`MouthLink.Receiver`, `mouthlink_live.py` and the VRCFT module accept frames only from the
+headset they subscribed to (`чужих=` in the Receiver's stats counts the rest). A model is
+trained on your face and runs as code in ONNX Runtime: use only your own, don't publish it.
 
 ## Roadmap
 

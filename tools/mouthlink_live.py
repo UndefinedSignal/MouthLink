@@ -120,7 +120,7 @@ def subscribe_packet(listen_port):
 class Source(threading.Thread):
     def __init__(self, host, ctrl, listen):
         super().__init__(daemon=True)
-        self.dst = (host, ctrl)
+        self.dst = (socket.gethostbyname(host), ctrl)
         self.listen = listen
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 8 << 20)
@@ -131,6 +131,7 @@ class Source(threading.Thread):
         self.new = threading.Event()
         self.latest = None
         self.frames = 0
+        self.foreign = 0
         self.stop = False
 
     def run(self):
@@ -145,12 +146,15 @@ class Source(threading.Thread):
                     pass
                 next_sub = now + 0.5
             try:
-                d, _ = self.sock.recvfrom(65536)
+                d, src = self.sock.recvfrom(65536)
             except (socket.timeout, ConnectionResetError):
                 continue
             except OSError:
                 if self.stop:
                     break
+                continue
+            if src[0] != self.dst[0]:
+                self.foreign += 1          # не от шлема, на который подписались: не доверяем
                 continue
             f = self.ra.feed(d)
             if f is not None:

@@ -172,6 +172,7 @@ if (viewPort > 0)
 }
 
 long bytesThisSec = 0;
+long foreignPackets = 0;   // датаграммы не от --host (отброшены)
 long completedAtLastReport = 0;
 double lastReportSec = 0;
 double clockOffsetNs = 0;   // t_pc ≈ t_src + offset
@@ -260,6 +261,12 @@ while (!stop.IsCancellationRequested)
     try { data = sock.Receive(ref from); }
     catch (SocketException) { continue; }        // таймаут или транзиентная ошибка — не повод падать
     catch { break; }                              // сокет закрыт (выход) — завершаемся
+    // Только от источника, на который подписались: чужой хост в сети не подмешает кадры в запись.
+    if (!(from.Address.IsIPv4MappedToIPv6 ? from.Address.MapToIPv4() : from.Address).Equals(srcCtrl.Address))
+    {
+        foreignPackets++;
+        continue;
+    }
 
     bytesThisSec += data.Length;
 
@@ -341,6 +348,7 @@ while (!stop.IsCancellationRequested)
             $"пропуск_id={idGaps,-5} {mbit,5:F1} Мбит/с  задержка≈{lastLatencyMs,4:F0} мс  запись={rec?.FramesWritten ?? 0}" +
             (wantStock ? $"  сток={stockCount}" + (stockBad > 0 ? $" (битых {stockBad})" : "") : "") +
             (idOutOfOrder > 0 ? $"  вне_порядка={idOutOfOrder}" : "") +
+            (foreignPackets > 0 ? $"  чужих={foreignPackets}" : "") +
             (verify ? $"  сверка: {framesVerified - verifyBadFrames}/{framesVerified} ок" +
                       (verifyBadFrames > 0 ? $", худший кадр {worstMismatch} пикс." : "") : ""));
         if (wantStock && !stockHintShown && stockCount == 0 && completed > 270)
