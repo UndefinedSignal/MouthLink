@@ -18,6 +18,10 @@ TongueRoll модуль показывает только пока язык вы
                         Стоковые каналы модель предсказывает в шкале стока — их не растягиваем.
   --hi-ch TongueRight=0.6[,…]  свой --hi для отдельных каналов (слабый канал доходит до 1 раньше)
   --tau 0.04            постоянная сглаживания всех каналов, с (0 — без сглаживания)
+  --filter euro         вместо постоянного сглаживания — фильтр One Euro: в покое и при медленном
+                        движении сглаживает сильно (дрожь уходит), при быстром почти не тормозит.
+                        --min-cutoff 0.7 (Гц; меньше — плавнее в покое), --beta 0.5 (больше — быстрее
+                        реагирует на резкие движения). --tau/--attack при этом не используются
   --attack 0.15         для языка (TongueOut, направления, TongueRoll) нарастание медленнее: короткий
                         всплеск при открытии рта не успевает «выбросить» язык; убирается он по --tau.
                         0 — как остальные каналы
@@ -41,6 +45,31 @@ STOCK = {"CheekPuff", "CheekSquintL", "CheekSquintR", "JawForward", "JawLeft", "
          "MouthRollLower", "MouthRollUpper", "MouthShrugLower", "MouthShrugUpper", "MouthSmileL", "MouthSmileR",
          "MouthStretchL", "MouthStretchR", "MouthUpperUpL", "MouthUpperUpR", "NoseSneerL", "NoseSneerR", "TongueOut"}
 HDR = 42
+
+
+class OneEuro:
+    """Фильтр One Euro (Casiez et al., 2012) сразу для вектора каналов."""
+
+    def __init__(self, n, min_cutoff, beta, d_cutoff=1.0):
+        self.min_cutoff, self.beta, self.d_cutoff = min_cutoff, beta, d_cutoff
+        self.x = None
+        self.dx = np.zeros(n, np.float32)
+
+    @staticmethod
+    def _alpha(cutoff, dt):
+        tau = 1.0 / (2 * np.pi * cutoff)
+        return 1.0 / (1.0 + tau / dt)
+
+    def __call__(self, x, dt):
+        if self.x is None:
+            self.x = x.copy()
+            return self.x
+        dt = max(dt, 1e-3)
+        dx = (x - self.x) / dt
+        self.dx += (dx - self.dx) * self._alpha(self.d_cutoff, dt)
+        cutoff = self.min_cutoff + self.beta * np.abs(self.dx)
+        self.x = self.x + (x - self.x) * self._alpha(cutoff, dt)
+        return self.x
 
 
 class Reassembler:
@@ -164,6 +193,9 @@ def main():
     ap.add_argument("--show", default="")
     ap.add_argument("--attack", type=float, default=0.0)
     ap.add_argument("--hi-ch", default="")
+    ap.add_argument("--filter", choices=["ema", "euro"], default="ema")
+    ap.add_argument("--min-cutoff", type=float, default=0.7)
+    ap.add_argument("--beta", type=float, default=0.5)
     ap.add_argument("--cpu", action="store_true")
     ap.add_argument("--seconds", type=float, default=0, help="остановиться через N секунд (для тестов)")
     a = ap.parse_args()
@@ -212,7 +244,7 @@ def main():
     print(f"модель: {a.onnx} ({len(channels)} каналов, вход {W}x{H}, {sess.get_providers()[0]}); описание: {meta_src}")
     what = (f"все {len(channels)} каналов (MLK2; новых {int(rare.sum())}: lo/hi)" if a.proto == 2
             else "направления языка (MLK1)")
-    print(f"{what} → {a.out}; lo={a.lo} hi={a.hi}" + (f" ({a.hi_ch})" if a.hi_ch else "") + f" tau={a.tau}s"
+    print(f"{what} → {a.out}; lo={a.lo} hi={a.hi}" + (f" ({a.hi_ch})" if a.hi_ch else "") + (f" filter=euro min_cutoff={a.min_cutoff} beta={a.beta}" if a.filter == "euro" else f" tau={a.tau}s")
           + (f" attack(язык)={a.attack}s" if a.attack > 0 else "") + ". Ctrl+C — выход.")
 
     oh, op = a.out.rsplit(":", 1)
@@ -223,6 +255,7 @@ def main():
     src.start()
 
     smooth = np.zeros(len(channels), np.float32)
+    euro = OneEuro(len(channels), a.min_cutoff, a.beta) if a.filter == "euro" else None
     last_cap = None
     seq = 0
     t0 = time.monotonic()
@@ -268,12 +301,15 @@ def main():
             raw = np.clip(np.asarray(y, np.float32), 0, 1)
             dt = 1 / 90 if last_cap is None else max(0.0, min(0.2, (f["cap"] - last_cap) / 1e9))
             last_cap = f["cap"]
-            alpha = 1.0 if a.tau <= 0 else 1.0 - np.exp(-dt / a.tau)
-            if a.attack > 0:
-                # Язык: нарастание с --attack, спад с --tau (асимметричное сглаживание).
-                up = 1.0 - np.exp(-dt / a.attack)
-                alpha = np.where(tongue & (raw > smooth), up, alpha)
-            smooth += (raw - smooth) * alpha
+            if euro is not None:
+                smooth[:] = euro(raw, dt)
+            else:
+                alpha = 1.0 if a.tau <= 0 else 1.0 - np.exp(-dt / a.tau)
+                if a.attack > 0:
+                    # Язык: нарастание с --attack, спад с --tau (асимметричное сглаживание).
+                    up = 1.0 - np.exp(-dt / a.attack)
+                    alpha = np.where(tongue & (raw > smooth), up, alpha)
+                smooth += (raw - smooth) * alpha
             np.maximum(peak, raw, out=peak)
             vals = np.where(rare, np.clip((smooth - a.lo) / (hi - a.lo), 0, 1), np.clip(smooth, 0, 1)).astype(np.float32)
             tout = float(vals[i_out]) if i_out is not None else 0.0
