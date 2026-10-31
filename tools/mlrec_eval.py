@@ -133,7 +133,8 @@ def main():
     rows = []
     order = [i for i in items if i in acc]
     print(f"\nмодель {a.onnx}; «модель» — сырой выход (до --lo/--hi), попаданий — по порогу 0.5\n")
-    print(f"{'поза':<18}{'канал':<20}{'цель':>5}{'сток':>7}{'модель':>8}{'попаданий':>11}")
+    W = max([18] + [len(k) + 2 for k in order])
+    print(f"{'поза':<{W}}{'канал':<20}{'цель':>5}{'сток':>7}{'модель':>8}{'попаданий':>11}")
     worst = []
     for key in order:
         r = acc[key]; n = r["n"]; mean = r["sum"] / n
@@ -144,14 +145,14 @@ def main():
             st = r["stock"].get(ch)
             st_s = f"{st / n:7.2f}" if st is not None else "      —"
             hit = r["hit"].get(ch, 0) / n
-            print(f"{key:<18}{ch:<20}{target:5.1f}{st_s}{mean[ci[ch]]:8.2f}{hit:10.0%}")
+            print(f"{key:<{W}}{ch:<20}{target:5.1f}{st_s}{mean[ci[ch]]:8.2f}{hit:10.0%}")
             rows.append([key, ch, target, "" if st is None else round(st / n, 3), round(float(mean[ci[ch]]), 3),
                          round(hit, 3), n])
             if target >= 0.5:
                 worst.append((hit, key, ch))
         others = [(mean[i], channels[i]) for i in np.argsort(-mean) if mean[i] >= 0.3 and channels[i] not in labels]
         if others:
-            print(f"{'':<18}ещё: " + ", ".join(f"{c} {v:.2f}" for v, c in others[:5]))
+            print(f"{'':<{W}}ещё: " + ", ".join(f"{c} {v:.2f}" for v, c in others[:5]))
     if rest_n:
         fp = [(rest_hits[i] / rest_n, channels[i]) for i in new_idx if rest_hits[i] / rest_n > 0.01]
         print(f"\n«{rest_id}» ({rest_n} кадров): ложные срабатывания новых каналов "
