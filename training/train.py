@@ -32,6 +32,16 @@ AUG = {
 }
 
 
+def fmt_dur(sec):
+    """Секунды → «45 с», «3 мин 10 с», «1 ч 25 мин»."""
+    sec = max(0, int(round(sec)))
+    if sec < 60:
+        return f"{sec} с"
+    if sec < 3600:
+        return f"{sec // 60} мин {sec % 60:02d} с"
+    return f"{sec // 3600} ч {sec % 3600 // 60:02d} мин"
+
+
 def load_dataset(path, mmap=False):
     frames = np.load(os.path.join(path, "frames.npy"), mmap_mode="r" if mmap else None)
     labels = np.load(os.path.join(path, "labels.npy")).astype(np.float32)
@@ -85,9 +95,17 @@ def load_datasets(specs, seed=0):
     frames = np.empty((n, meta0["height"], meta0["width"]), np.uint8)
     labels, groups, names, o, g0 = [], [], [], 0, 0
     for p, (f, y, g, nm, _) in zip(paths, parts):
-        for c in range(0, len(f), 4096):                       # кусками: без лишней копии в ОЗУ
-            chunk = f[c:c + 4096]
+        t_ds = time.time()
+        step = 4096
+        for c in range(0, len(f), step):                       # кусками: без лишней копии в ОЗУ
+            chunk = f[c:c + step]
             frames[o + c:o + c + len(chunk)] = chunk
+            done = c + len(chunk)
+            if (c // step) % 32 == 31 and done < len(f):
+                el = time.time() - t_ds
+                print(f"    {p}: {100 * done // len(f)}%  (ещё ~{fmt_dur(el / done * (len(f) - done))})", flush=True)
+        gb = len(f) * meta0["height"] * meta0["width"] / 2**30
+        print(f"  {p}: {len(f)} кадров, {gb:.1f} ГБ за {fmt_dur(time.time() - t_ds)}", flush=True)
         o += len(f)
         labels.append(y); groups.append(g + g0); g0 += len(nm)
         names += nm
@@ -254,7 +272,7 @@ def format_directions(d):
     return "  редкие каналы — " + "; ".join(parts)
 
 
-def train_once(a, X, Y, G, tr_idx, va_idx, K, perm, mirror, n_groups, dev, log=print):
+def train_once(a, X, Y, G, tr_idx, va_idx, K, perm, mirror, n_groups, dev, log=print, progress=print, prefix=""):
     torch.manual_seed(a.seed)
     gen = torch.Generator(device=dev).manual_seed(a.seed)
     net = build_model(a.arch, K, width=a.width, pretrained=a.pretrained and a.init_state is None).to(dev)
@@ -276,6 +294,7 @@ def train_once(a, X, Y, G, tr_idx, va_idx, K, perm, mirror, n_groups, dev, log=p
     if steps < 200:
         log(f"  ВНИМАНИЕ: всего {steps} шагов оптимизатора — модель, скорее всего, недообучится; "
             f"увеличь --epochs (на маленьких данных считай шаги, а не эпохи)")
+    t_train = time.time()
     for ep in range(1, a.epochs + 1):
         net.train()
         if a.pretrained:
@@ -283,11 +302,14 @@ def train_once(a, X, Y, G, tr_idx, va_idx, K, perm, mirror, n_groups, dev, log=p
         order = tr_idx_t[torch.randperm(len(tr_idx_t), device=dev, generator=gen)]
         tl, tn = 0.0, 0
         n_steps = max(1, (len(order) - bs) // bs + 1)
-        every, t_ep = max(1, n_steps // 10), time.time()
+        every, t_ep = max(1, n_steps // (4 if prefix else 10)), time.time()
         for k, s in enumerate(range(0, len(order) - bs + 1, bs), 1):
             if k % every == 0 and k < n_steps:
                 el = time.time() - t_ep
-                log(f"    эпоха {ep}: {100 * k // n_steps:3d}%  ({k}/{n_steps} шагов, ещё ~{el / k * (n_steps - k):.0f} с)")
+                ep_left = el / k * (n_steps - k)
+                total_left = ep_left + el / k * n_steps * (a.epochs - ep)
+                progress(f"    {prefix}эпоха {ep}/{a.epochs}: {100 * k // n_steps:3d}%  — до конца эпохи ~{fmt_dur(ep_left)}, "
+                         f"до конца {'фолда' if prefix else 'обучения'} ~{fmt_dur(total_left)}")
             ii = order[s:s + bs]
             x = frames_batch(X, ii, dev)
             y = Y[ii]
@@ -306,9 +328,10 @@ def train_once(a, X, Y, G, tr_idx, va_idx, K, perm, mirror, n_groups, dev, log=p
             if vm < best:
                 best = vm
                 best_state = {k: v.detach().cpu().clone() for k, v in net.state_dict().items()}
-            log(f"  эпоха {ep:2d}/{a.epochs}  train MSE={row['train_mse']:.4f}  val MAE={vm:.4f}")
+            log(f"  эпоха {ep:2d}/{a.epochs}  train MSE={row['train_mse']:.4f}  val MAE={vm:.4f}  "
+                f"({fmt_dur(time.time() - t_ep)})")
         else:
-            log(f"  эпоха {ep:2d}/{a.epochs}  train MSE={row['train_mse']:.4f}")
+            log(f"  эпоха {ep:2d}/{a.epochs}  train MSE={row['train_mse']:.4f}  ({fmt_dur(time.time() - t_ep)})")
         hist.append(row)
     if best_state is None:   # без валидации — берём последнюю эпоху
         best_state = {k: v.detach().cpu().clone() for k, v in net.state_dict().items()}
@@ -356,8 +379,12 @@ def main():
         raise SystemExit("--pretrained имеет смысл только с --arch mnv3")
 
     t_load = time.time()
-    frames, labels, groups, gnames, meta = load_datasets([p.strip() for p in a.data.split(",") if p.strip()], a.seed)
-    print(f"загрузка датасетов: {time.time() - t_load:.0f} с")
+    specs = [p.strip() for p in a.data.split(",") if p.strip()]
+    total_gb = sum(os.path.getsize(os.path.join(sp.rpartition("@")[0] if "@" in sp else sp, "frames.npy"))
+                   for sp in specs if os.path.exists(os.path.join(sp.rpartition("@")[0] if "@" in sp else sp, "frames.npy"))) / 2**30
+    print(f"загружаю датасеты ({total_gb:.1f} ГБ с диска; с HDD это минуты)…", flush=True)
+    frames, labels, groups, gnames, meta = load_datasets(specs, a.seed)
+    print(f"загрузка датасетов: {fmt_dur(time.time() - t_load)}", flush=True)
     if init_ck is not None:
         if init_ck["channels"] != meta["channels"] or (init_ck["height"], init_ck["width"]) != (meta["height"], meta["width"]):
             raise SystemExit(f"{a.init}: каналы или размер кадра модели не совпадают с датасетом — "
@@ -403,8 +430,10 @@ def main():
         for g in range(n_groups):
             va = np.flatnonzero(groups == g)
             tr = np.flatnonzero(groups != g)
-            print(f"фолд {g + 1}/{n_groups}: исключена сессия '{gnames[g]}' ({len(va)} кадров)")
-            net, _, _ = train_once(a, X, Y, G, tr, va, K, perm, mirror, n_groups, dev, log=lambda *_: None)
+            print(f"фолд {g + 1}/{n_groups}: исключена сессия '{gnames[g]}' ({len(va)} кадров)", flush=True)
+            t_fold = time.time()
+            net, _, _ = train_once(a, X, Y, G, tr, va, K, perm, mirror, n_groups, dev, log=lambda *_: None,
+                                   prefix=f"фолд {g + 1}/{n_groups}, ")
             vm, vch, _ = evaluate(net, X, Y, G, va, a.batch * 2, n_groups)
             print(f"  MAE={vm:.4f}  по каналам: " + ", ".join(f"{c}={v:.3f}" for c, v in zip(meta["channels"], vch)))
             dirs = direction_scores(net, X, Y, va, a.batch * 2, meta["channels"])
@@ -412,6 +441,9 @@ def main():
                 print(format_directions(dirs))
             folds.append(dict(session=gnames[g], mae=vm, per_channel=dict(zip(meta["channels"], vch)),
                               directions=dirs))
+            done = time.time() - t0
+            print(f"  фолд {g + 1}/{n_groups} за {fmt_dur(time.time() - t_fold)}; "
+                  f"осталось ~{fmt_dur(done / (g + 1) * (n_groups - g - 1))}", flush=True)
         maes = [f["mae"] for f in folds]
         print(f"CV по сессиям: средний MAE={np.mean(maes):.4f}, худший={np.max(maes):.4f} "
               f"(сессия '{folds[int(np.argmax(maes))]['session']}'), {time.time() - t0:.0f} с")
