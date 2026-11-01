@@ -170,7 +170,9 @@ which other channels the model lights up, and false positives on "relax".
      `"HiChannels": { "TongueRight": 0.45 }`); stock channels go as predicted;
    - smoothing: `"Filter": "euro"` (One Euro: steady at rest, quick on fast moves;
      `MinCutoff`, `Beta`) or `"ema"` (`Tau`);
-   - `"Headset": "<headset-IP>"` if the address should not come from the bridge.
+   - `"Headset": "<headset-IP>"` if the address should not come from the bridge;
+   - `"Fps"`: camera frames per second, 0 = every frame (90, ~118 Mbit/s). If Wi-Fi or the
+     headset's radio struggles (stutter, Virtual Desktop drops), try 45 (~60 Mbit/s) or 30 (~40).
 
    Tongue directions and TongueRoll show only while TongueOut is up. Without fresh model
    values everything falls back to stock within 150 ms. Eye tracking is never touched.

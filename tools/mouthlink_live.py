@@ -31,6 +31,7 @@ TongueRoll модуль показывает только пока язык вы
   --meta FILE           описание модели (.json от export_onnx.py или meta.json датасета),
                         если рядом с .onnx нет <имя>.json
   --out 127.0.0.1:9050  куда слать
+  --fps 45              кадров/с от шлема (0 — все 90, ~118 Мбит/с; 60/45/30 — меньше нагрузка на Wi-Fi)
   --cpu                 только CPU
 """
 import argparse, json, os, socket, struct, sys, threading, time, zlib
@@ -112,16 +113,17 @@ class Reassembler:
         return dict(fid=fid, cap=cap, fmt=fmt, comp=comp, w=w, h=h, x=rx, y=ry, payload=bytes(p["buf"]))
 
 
-def subscribe_packet(listen_port):
-    # SUBSCRIBE v1, 16 байт: fps 0 (каждый кадр), формат на выбор источника, без ROI, без STOCK.
-    return struct.pack("<BBHBBHHHHBB", 0x02, 1, listen_port, 0, 0, 0, 0, 0, 0, 0, 0)
+def subscribe_packet(listen_port, fps=0):
+    # SUBSCRIBE v1, 16 байт: fps (0 — каждый кадр), формат на выбор источника, без ROI, без STOCK.
+    return struct.pack("<BBHBBHHHHBB", 0x02, 1, listen_port, fps, 0, 0, 0, 0, 0, 0, 0)
 
 
 class Source(threading.Thread):
-    def __init__(self, host, ctrl, listen):
+    def __init__(self, host, ctrl, listen, fps=0):
         super().__init__(daemon=True)
         self.dst = (socket.gethostbyname(host), ctrl)
         self.listen = listen
+        self.fps = fps
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 8 << 20)
         self.sock.bind(("0.0.0.0", listen))
@@ -135,7 +137,7 @@ class Source(threading.Thread):
         self.stop = False
 
     def run(self):
-        sub = subscribe_packet(self.listen)
+        sub = subscribe_packet(self.listen, self.fps)
         next_sub = 0.0
         while not self.stop:
             now = time.monotonic()
@@ -201,6 +203,7 @@ def main():
     ap.add_argument("--min-cutoff", type=float, default=0.7)
     ap.add_argument("--beta", type=float, default=0.5)
     ap.add_argument("--cpu", action="store_true")
+    ap.add_argument("--fps", type=int, default=0, help="кадров/с от шлема: 0 — все (90); 60/45/30 — меньше нагрузка на Wi-Fi")
     ap.add_argument("--seconds", type=float, default=0, help="остановиться через N секунд (для тестов)")
     a = ap.parse_args()
     if not 0 <= a.lo < a.hi <= 1:
@@ -255,7 +258,9 @@ def main():
     out_addr = (oh, int(op))
     out = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
-    src = Source(a.host, a.ctrl, a.listen)
+    if not 0 <= a.fps <= 90:
+        raise SystemExit("--fps: 0..90")
+    src = Source(a.host, a.ctrl, a.listen, a.fps)
     src.start()
 
     smooth = np.zeros(len(channels), np.float32)
