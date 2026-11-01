@@ -214,3 +214,7 @@ trained on your face and runs as code in ONNX Runtime: use only your own, don't 
 - Tongue direction from prompted sessions (in progress), then circular motion.
 - Full face live in VRChat: per-channel tuning of model vs stock on real sessions.
 - Optional compression (lz4) and an address allowlist on the headset side.
+
+## License
+
+[MIT](LICENSE). Recordings, datasets and trained models are personal data and are not part of the repository.
