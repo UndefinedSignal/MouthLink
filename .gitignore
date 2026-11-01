@@ -29,3 +29,7 @@ obj/
 .vs/
 *.bak
 *.zip
+
+# Рабочее место tools/mouthlink.py (пути, IP шлема)
+workspace.json
+workspace.json.tmp

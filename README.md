@@ -175,6 +175,12 @@ which other channels the model lights up, and false positives on "relax".
    Tongue directions and TongueRoll show only while TongueOut is up. Without fresh model
    values everything falls back to stock within 150 ms. Eye tracking is never touched.
 
+**Updating the model.** `tools/mouthlink.py` wraps the whole loop: `record face` (picks the
+next name, frees the camera for the receiver and gives it back), `update` (pairs new recordings,
+fine-tunes, checks the result on the newest recording it did not train on against the current
+model, installs it into VRCFT only if it is not worse), `rollback`, `restore` (after a VRCFT
+reinstall wiped the module folder). See [training/README.md](training/README.md).
+
 **Recording while VRCFT runs.** The headset streams to one subscriber. Before recording with
 `MouthLink.Receiver`, set `"Source": "udp"` in `MouthLink.json` (the module lets go of the
 camera within a second); set it back to `"auto"` afterwards.
