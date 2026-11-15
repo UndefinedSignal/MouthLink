@@ -12,7 +12,8 @@ namespace MouthLink.Core;
 /// если приёмник выставил SubscribeFlags.WantStock. SourceNs совпадает с CaptureNs
 /// FRAGMENT того же кадра — спаривание по точному равенству.
 ///
-///   0 type | 1 version | 2 flags (бит0 valid, бит1 warmup) | 3 int8 class (-1/0/1)
+///   0 type | 1 version | 2 flags (бит0 valid, бит1 warmup, бит2 нестоковая постобработка рта — ml5+)
+///   | 3 int8 class (-1/0/1)
 ///   4 u32 seq | 8 u64 source_ns
 ///   16  f32 raw[35]      — выход нейросети стока (0..32 — каналы mouth33, 33 — вероятность качества)
 ///   156 f32 instant[33]  — после стоковой постобработки, БЕЗ временного сглаживания
@@ -51,6 +52,9 @@ public sealed class StockSample
     public uint Seq;
     public ulong SourceNs;
     public bool Valid, Warmup;
+    /// <summary>Шлем (ml5+) с настройками mouth.* постобработки не как в стоке: instant/final
+    /// не в стоковой шкале, смешивать такие метки со стоковыми для обучения нельзя.</summary>
+    public bool CustomProcessing;
     public sbyte Classification;
     public readonly float[] Raw = new float[RawCount];
     public readonly float[] Instant = new float[MouthCount];
@@ -65,6 +69,7 @@ public sealed class StockSample
         {
             Valid = (s[2] & 1) != 0,
             Warmup = (s[2] & 2) != 0,
+            CustomProcessing = (s[2] & 4) != 0,
             Classification = unchecked((sbyte)s[3]),
             Seq = BinaryPrimitives.ReadUInt32LittleEndian(s.Slice(4, 4)),
             SourceNs = BinaryPrimitives.ReadUInt64LittleEndian(s.Slice(8, 8)),
@@ -85,7 +90,7 @@ public sealed class StockSample
         dst.Slice(0, Size).Clear();
         dst[0] = (byte)PacketType.Stock;
         dst[1] = FrameHeader.CurrentVersion;
-        dst[2] = (byte)((Valid ? 1 : 0) | (Warmup ? 2 : 0));
+        dst[2] = (byte)((Valid ? 1 : 0) | (Warmup ? 2 : 0) | (CustomProcessing ? 4 : 0));
         dst[3] = unchecked((byte)Classification);
         BinaryPrimitives.WriteUInt32LittleEndian(dst.Slice(4, 4), Seq);
         BinaryPrimitives.WriteUInt64LittleEndian(dst.Slice(8, 8), SourceNs);
@@ -103,7 +108,8 @@ public sealed class StockSample
 /// <summary>
 /// Журнал STOCK рядом с записью кадров: &lt;имя&gt;.stock.csv. Одна строка на пакет, в порядке
 /// прихода. Колонки: source_ns, seq, valid, warmup, class, raw_0..raw_34,
-/// inst_&lt;Имя&gt; ×33, fin_&lt;Имя&gt; ×33. Числа — инвариантная культура (точка).
+/// inst_&lt;Имя&gt; ×33, fin_&lt;Имя&gt; ×33, custom (1 — нестоковая постобработка рта, ml5+;
+/// последняя колонка, чтобы старые читатели по индексам не сломались). Числа — инвариантная культура (точка).
 /// </summary>
 public sealed class StockCsvWriter : IDisposable
 {
@@ -119,6 +125,7 @@ public sealed class StockCsvWriter : IDisposable
         for (int i = 0; i < StockSample.RawCount; i++) h.Append(",raw_").Append(i);
         foreach (var n in StockSample.MouthNames) h.Append(",inst_").Append(n);
         foreach (var n in StockSample.MouthNames) h.Append(",fin_").Append(n);
+        h.Append(",custom");
         _w.WriteLine(h.ToString());
     }
 
@@ -132,6 +139,7 @@ public sealed class StockCsvWriter : IDisposable
         foreach (var x in s.Raw) _sb.Append(',').Append(x.ToString("R", ci));
         foreach (var x in s.Instant) _sb.Append(',').Append(x.ToString("R", ci));
         foreach (var x in s.Final) _sb.Append(',').Append(x.ToString("R", ci));
+        _sb.Append(',').Append(s.CustomProcessing ? '1' : '0');
         _w.WriteLine(_sb.ToString());
         Rows++;
     }

@@ -32,6 +32,9 @@ import argparse, glob, hashlib, json, os, re, shutil, subprocess, sys, time
 
 import numpy as np
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from mlrec_pair import CUSTOM_HINT, stock_custom_rows  # noqa: E402
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TRAIN = os.path.join(ROOT, "training")
 WS_PATH = os.path.join(ROOT, "workspace.json")
@@ -144,9 +147,24 @@ def recordings(ws):
     return recs
 
 
-def new_recordings(ws, ds=None):
+def custom_processing(rec):
+    """Запись сделана не на стоковой постобработке шлема (пресет не Stock, шлем ml5+)."""
+    return stock_custom_rows(os.path.splitext(rec)[0] + ".stock.csv") > 0
+
+
+def new_recordings(ws, ds=None, skipped=None):
+    """Записи, ещё не вошедшие в датасеты. Записи не на пресете Stock не берутся (их имена — в skipped)."""
     used = {s for d in (ds if ds is not None else datasets(ws)) for s in d["sessions"]}
-    return {k: v for k, v in recordings(ws).items() if k not in used}
+    out = {}
+    for k, v in recordings(ws).items():
+        if k in used:
+            continue
+        if custom_processing(v):
+            if skipped is not None:
+                skipped.append(k)
+            continue
+        out[k] = v
+    return out
 
 
 def module_config(ws):
@@ -190,8 +208,11 @@ def cmd_status(a):
             say("  ! в модуле нет модели — python tools/mouthlink.py restore")
         elif os.path.exists(os.path.join(run, "mouth.onnx")) and md5(installed) != md5(os.path.join(run, "mouth.onnx")):
             say("  ! в модуле стоит другая модель, не текущая — restore поставит текущую")
-    new = new_recordings(ws, ds)
+    skipped = []
+    new = new_recordings(ws, ds, skipped)
     say(f"Новые записи:    {', '.join(new) if new else 'нет'}")
+    if skipped:
+        say(f"  ! не на пресете Stock, в дообучение не пойдут: {', '.join(skipped)}")
     say("")
     if not new:
         say("Дальше: python tools/mouthlink.py record face   (или record tongue) — записать новую сессию.")
@@ -262,7 +283,9 @@ def cmd_record(a):
         if cfg and old not in (None, "udp"):
             set_source(cfg, old)
             say(f"\nМодуль VRCFT снова берёт камеру (\"Source\": \"{old}\").")
-    if os.path.exists(out):
+    if os.path.exists(out) and custom_processing(out):
+        say(f"\n! {name}: {CUSTOM_HINT}.\n  Эта запись в дообучение не пойдёт.")
+    elif os.path.exists(out):
         n = len(new_recordings(ws))
         say(f"\nГотово: {name}. Новых записей: {n}. "
             + ("Сними и надень шлем и запиши ещё одну — или: python tools/mouthlink.py update" if n < 2
@@ -393,7 +416,10 @@ def cmd_update(a):
     if not base:
         die("нет текущей модели (best.pt) — сначала обучи модель с нуля (training/README.md)")
     ds = datasets(ws)
-    new = new_recordings(ws, ds)
+    skipped = []
+    new = new_recordings(ws, ds, skipped)
+    if skipped and not a.recordings:
+        say(f"! пропускаю записи не на пресете Stock: {', '.join(skipped)}")
     if a.recordings:
         recs = {}
         for p in a.recordings:

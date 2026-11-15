@@ -183,6 +183,13 @@ fine-tunes, checks the result on the newest recording it did not train on agains
 model, installs it into VRCFT only if it is not worse), `rollback`, `restore` (after a VRCFT
 reinstall wiped the module folder). See [training/README.md](training/README.md).
 
+**Headset postprocessing preset.** Since PicoET-Enhance 2.5 the headset has a settings app with
+postprocessing presets (Balanced, Responsive, Stock, No processing). Stock labels are taken after
+this postprocessing, and the model was trained on the stock one. Record with the **Stock** preset:
+an ml5+ headset marks sessions recorded with another preset, the receiver warns at once and the
+wizard leaves them out of fine-tuning. For playing any preset is fine — the mouth the model writes
+does not depend on the app's mouth settings.
+
 **Recording while VRCFT runs.** The headset streams to one subscriber. Before recording with
 `MouthLink.Receiver`, set `"Source": "udp"` in `MouthLink.json` (the module lets go of the
 camera within a second); set it back to `"auto"` afterwards.

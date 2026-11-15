@@ -139,7 +139,8 @@ SessionWriter? rec = recordPath != null ? new SessionWriter(recordPath) : null;
 string? stockPath = rec != null && wantStock ? Path.ChangeExtension(recordPath!, ".stock.csv") : null;
 StockCsvWriter? stockLog = stockPath != null ? new StockCsvWriter(stockPath) : null;
 if (stockLog != null) Console.WriteLine($"стоковые значения рта → {stockPath}");
-long stockCount = 0, stockBad = 0;
+long stockCount = 0, stockBad = 0, stockCustom = 0;
+bool customHintShown = false;
 bool stockHintShown = false;
 // Запись и закрытие файла — под одной блокировкой: закрытие из обработчика выхода
 // не должно попасть в середину записи кадра (иначе в файле обрезанный хвост).
@@ -290,6 +291,7 @@ while (!stop.IsCancellationRequested)
         if (StockSample.TryParse(data, out var st) && st != null)
         {
             stockCount++;
+            if (st.CustomProcessing) stockCustom++;
             lock (recLock) stockLog?.Write(st);
         }
         else stockBad++;
@@ -355,6 +357,12 @@ while (!stop.IsCancellationRequested)
         {
             Console.WriteLine("  ! кадры идут, а стоковых значений нет: на шлеме модуль старше ml3 (или запусти с --no-stock)");
             stockHintShown = true;
+        }
+        if (stockCustom > 0 && !customHintShown)
+        {
+            Console.WriteLine("  ! на шлеме постобработка рта не стоковая (пресет не Stock в приложении PicoET-Enhance):");
+            Console.WriteLine("    метки в другой шкале, мастер не возьмёт эту запись в дообучение. Поставь Stock, «Применить», запиши заново.");
+            customHintShown = true;
         }
         completedAtLastReport = completed;
         bytesThisSec = 0;

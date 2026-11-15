@@ -158,6 +158,22 @@ def read_stock(path, kind):
     return rows
 
 
+def stock_custom_rows(path):
+    """Строк STOCK с нестоковой постобработкой рта (колонка custom, шлем ml5+); 0, если колонки нет."""
+    with open(path, newline="", encoding="utf-8") as f:
+        r = csv.reader(f)
+        hdr = next(r, [])
+        if "custom" not in hdr:
+            return 0
+        i = hdr.index("custom")
+        return sum(1 for row in r if len(row) > i and row[i] == "1")
+
+
+CUSTOM_HINT = ("метки сняты не на стоковой постобработке шлема (пресет не Stock в приложении "
+               "PicoET-Enhance): их шкала другая, и обучение на смеси с прежними записями собьёт "
+               "модель. Поставь пресет Stock, нажми «Применить» и запиши заново")
+
+
 def to_image(pf, w, h, payload):
     if pf == 1:
         return np.frombuffer(payload, np.uint8).reshape(h, w)
@@ -184,6 +200,8 @@ def main():
     ap.add_argument("--face", action="store_true")
     ap.add_argument("--catalog")
     ap.add_argument("--neg-cheek", type=float, default=0.05)
+    ap.add_argument("--allow-custom-processing", action="store_true",
+                    help="взять записи, сделанные не на пресете Stock (обычно не нужно)")
     a = ap.parse_args()
 
     crop = tuple(int(v) for v in a.crop.split(",")) if a.crop else None
@@ -242,9 +260,12 @@ def main():
         stock_path = os.path.splitext(sess)[0] + ".stock.csv"
         if not os.path.exists(stock_path):
             raise SystemExit(f"нет {stock_path}: запись сделана без стока (нужен модуль ml3 и приёмник без --no-stock)")
+        custom = stock_custom_rows(stock_path)
+        if custom and not a.allow_custom_processing:
+            raise SystemExit(f"{sess}: {CUSTOM_HINT} (или --allow-custom-processing)")
         stock = read_stock(stock_path, a.labels)
         st = dict(file=sess, stock_rows=len(stock), frames=0, matched=0, no_stock=0,
-                  invalid=0, warmup=0, taken=0)
+                  invalid=0, warmup=0, taken=0, custom_processing=custom)
         prompts = read_prompts(os.path.splitext(sess)[0] + ".prompts.csv") if (a.tongue or a.face) else []
         starts = [p[0] for p in prompts]
         if a.face:
